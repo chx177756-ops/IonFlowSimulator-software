@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(diff -u /dev/null /dev/null 2>&1; echo \"--- cad_viewer.h changes ---\"; grep -n \"hasResultActor\\\\|setGeometryHidden\\\\|setResultVisible\\\\|m_geometryHidden\\\\|m_resultVisible\" src/cad_viewer.h)",
+      "Read(//dev/**)",
+      "Bash(glxinfo)",
+      "Bash(nvidia-smi)",
+      "Read(//usr/lib/x86_64-linux-gnu/**)",
+      "Bash(dpkg -l)",
+      "Bash(apt list *)",
+      "Read(//usr/include/vtk-7.1/**)",
+      "Bash(MESA_GL_VERSION_OVERRIDE=3.3 glxinfo -B)",
+      "Read(//usr/share/drirc.d/**)",
+      "Bash(LIBGL_DEBUG=verbose glxinfo)"
+    ]
+  }
+}

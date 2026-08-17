@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1366</width>
+    <height>820</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>离子流场模拟器 - 前处理与求解模块</string>
+  </property>
+  
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <property name="spacing"><number>0</number></property>
+    <property name="margin"><number>0</number></property>
+    <item>
+     <widget class="QFrame" name="frameGraphicsTools">
+      <property name="frameShape"><enum>QFrame::NoFrame</enum></property>
+      <layout class="QHBoxLayout" name="horizontalLayout_tools">
+       <property name="topMargin"><number>4</number></property>
+       <property name="bottomMargin"><number>4</number></property>
+       <property name="leftMargin"><number>8</number></property>
+       <property name="rightMargin"><number>8</number></property>
+       <item><widget class="QToolButton" name="btnClearSelection"><property name="text"><string>清空选择</string></property></widget></item>
+       <item><widget class="QToolButton" name="btnXY"><property name="text"><string>XY 视图</string></property></widget></item>
+       <item><widget class="QToolButton" name="btnYZ"><property name="text"><string>YZ 视图</string></property></widget></item>
+       <item><widget class="QToolButton" name="btnZX"><property name="text"><string>ZX 视图</string></property></widget></item>
+       <item><widget class="QToolButton" name="btnBoxPick"><property name="text"><string>框选</string></property><property name="checkable"><bool>true</bool></property></widget></item>
+       <item>
+        <widget class="QComboBox" name="comboSelectMode">
+         <item><property name="text"><string>相交实体</string></property></item>
+         <item><property name="text"><string>内部实体</string></property></item>
+        </widget>
+       </item>
+       <item><widget class="QToolButton" name="btnHideMode"><property name="text"><string>隐藏模式</string></property><property name="checkable"><bool>true</bool></property></widget></item>
+       <item>
+        <widget class="QComboBox" name="comboViewMode">
+         <item><property name="text"><string>查看未隐藏</string></property></item>
+         <item><property name="text"><string>仅查看隐藏</string></property></item>
+         <item><property name="text"><string>查看所有</string></property></item>
+        </widget>
+       </item>
+       <item><widget class="QToolButton" name="btnResetHidden"><property name="text"><string>重置隐藏项</string></property></widget></item>
+       <item><spacer name="horizontalSpacerTools"><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="CADViewer" name="cadViewerWidget" native="true">
+      <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Expanding"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry"><rect><x>0</x><y>0</y><width>1366</width><height>24</height></rect></property>
+   <widget class="QMenu" name="menuFile">
+    <property name="title"><string>文件 (File)</string></property>
+    <addaction name="actionImport"/>
+    <addaction name="actionImportMesh"/>
+    <addaction name="actionExportGeometry"/>
+    <addaction name="actionExportMesh"/>
+    <addaction name="separator"/>
+    <addaction name="actionExit"/>
+   </widget>
+   <addaction name="menuFile"/>
+  </widget>
+
+  <widget class="QToolBar" name="mainToolBar">
+   <property name="windowTitle"><string>主操作</string></property>
+   <attribute name="toolBarArea"><enum>TopToolBarArea</enum></attribute>
+   <addaction name="actionImport"/>
+   <addaction name="actionImportMesh"/>
+  </widget>
+
+  <widget class="QDockWidget" name="dockModelBuilder">
+   <property name="windowTitle"><string>模型开发器</string></property>
+   <attribute name="dockWidgetArea"><number>1</number></attribute>
+   <widget class="QWidget" name="dockWidgetContents">
+    <layout class="QVBoxLayout" name="verticalLayout_2">
+     <property name="margin"><number>4</number></property>
+     <item><widget class="QTreeWidget" name="treeGroups"><property name="contextMenuPolicy"><enum>Qt::CustomContextMenu</enum></property><column><property name="text"><string>结构</string></property></column></widget></item>
+    </layout>
+   </widget>
+  </widget>
+
+  <widget class="QDockWidget" name="dockSettings">
+   <property name="windowTitle"><string>设置</string></property>
+   <attribute name="dockWidgetArea"><number>1</number></attribute>
+   <widget class="QWidget" name="dockWidgetContents_2">
+    <layout class="QVBoxLayout" name="verticalLayout_3">
+     <property name="margin"><number>4</number></property>
+     <item>
+      <widget class="QStackedWidget" name="stackedWidgetSettings">
+       <property name="currentIndex"><number>0</number></property>
+       
+       <widget class="QWidget" name="pageGroup">
+        <layout class="QVBoxLayout" name="verticalLayout_page1">
+         <item>
+          <layout class="QFormLayout" name="formLayout">
+           <item row="0" column="0"><widget class="QLabel" name="label"><property name="text"><string>标签:</string></property></widget></item>
+           <item row="0" column="1"><widget class="QLineEdit" name="editGroupName"><property name="enabled"><bool>false</bool></property></widget></item>
+          </layout>
+         </item>
+         <item>
+          <widget class="QGroupBox" name="groupBox">
+           <property name="title"><string>输入实体 (边界)</string></property>
+           <layout class="QVBoxLayout" name="verticalLayout_4">
+            <item><widget class="QPushButton" name="btnClear"><property name="text"><string>清空选择</string></property></widget></item>
+            <item><widget class="QListWidget" name="listSelectedFaces"/></item>
+           </layout>
+          </widget>
+         </item>
+         <item><spacer name="verticalSpacer"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
+        </layout>
+       </widget>
+       
+       <widget class="QWidget" name="pageMesh">
+        <layout class="QVBoxLayout" name="verticalLayout_page2">
+         <item>
+          <widget class="QGroupBox" name="groupMeshTarget">
+           <property name="title"><string>目标物理组</string></property>
+           <layout class="QVBoxLayout">
+            <item><widget class="QComboBox" name="comboMeshGroupTarget"/></item>
+            <item><widget class="QCheckBox" name="chkEnableLocalField"><property name="text"><string>启用该区域的局部网格加密场</string></property></widget></item>
+           </layout>
+          </widget>
+         </item>
+
+         <item>
+          <widget class="QGroupBox" name="groupBoxMesh">
+           <property name="title"><string>局部场控制参数 (Local Field)</string></property>
+           <layout class="QFormLayout" name="formLayout_2">
+            <item row="0" column="0"><widget class="QLabel"><property name="text"><string>SizeMin (最小网格):</string></property></widget></item>
+            <item row="0" column="1"><widget class="QDoubleSpinBox" name="spinSizeMin"><property name="decimals"><number>3</number></property><property name="maximum"><double>10000.0</double></property></widget></item>
+            <item row="1" column="0"><widget class="QLabel"><property name="text"><string>SizeMax (最大网格):</string></property></widget></item>
+            <item row="1" column="1"><widget class="QDoubleSpinBox" name="spinSizeMax"><property name="decimals"><number>3</number></property><property name="maximum"><double>10000.0</double></property></widget></item>
+            <item row="2" column="0"><widget class="QLabel"><property name="text"><string>DistMin (加密起点):</string></property></widget></item>
+            <item row="2" column="1"><widget class="QDoubleSpinBox" name="spinDistMin"><property name="decimals"><number>3</number></property><property name="maximum"><double>10000.0</double></property></widget></item>
+            <item row="3" column="0"><widget class="QLabel"><property name="text"><string>DistMax (加密范围):</string></property></widget></item>
+            <item row="3" column="1"><widget class="QDoubleSpinBox" name="spinDistMax"><property name="decimals"><number>3</number></property><property name="maximum"><double>10000.0</double></property></widget></item>
+           </layout>
+          </widget>
+         </item>
+
+         <item>
+          <widget class="QGroupBox" name="groupGlobalMesh">
+           <property name="title"><string>全局设置</string></property>
+           <layout class="QFormLayout">
+            <item row="0" column="0"><widget class="QLabel"><property name="text"><string>网格阶次 (Order):</string></property></widget></item>
+            <item row="0" column="1">
+             <widget class="QComboBox" name="comboOrder">
+              <item><property name="text"><string>1阶 (线性直边)</string></property></item>
+              <item><property name="text"><string>2阶 (二阶曲面贴合)</string></property></item>
+             </widget>
+            </item>
+            <item row="1" column="0"><widget class="QLabel"><property name="text"><string>Netgen 优化:</string></property></widget></item>
+            <item row="1" column="1"><widget class="QCheckBox" name="checkOptimize"><property name="text"><string>启用</string></property><property name="checked"><bool>true</bool></property></widget></item>
+            <item row="2" column="0"><widget class="QLabel"><property name="text"><string>并行线程数:</string></property></widget></item>
+            <item row="2" column="1"><widget class="QSpinBox" name="spinMeshThreads"><property name="minimum"><number>1</number></property><property name="maximum"><number>128</number></property></widget></item>
+           </layout>
+          </widget>
+         </item>
+
+         <item><widget class="QPushButton" name="btnGenerateMesh"><property name="minimumSize"><size><width>0</width><height>40</height></size></property><property name="text"><string>按照当前方案生成网格</string></property></widget></item>
+         <item><widget class="QPushButton" name="btnExportMesh"><property name="minimumSize"><size><width>0</width><height>30</height></size></property><property name="text"><string>导出当前网格至 .msh 文件</string></property></widget></item>
+         <item><spacer name="verticalSpacer_2"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
+        </layout>
+       </widget>
+      </widget>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+
+  <action name="actionImport">
+   <property name="text"><string>导入几何</string></property>
+  </action>
+  <action name="actionImportMesh">
+   <property name="text"><string>导入网格 (MSH)</string></property>
+  </action>
+  <action name="actionExportGeometry">
+   <property name="text"><string>导出几何</string></property>
+  </action>
+  <action name="actionExportMesh">
+   <property name="text"><string>导出网格</string></property>
+  </action>
+  <action name="actionExit">
+   <property name="text"><string>退出</string></property>
+  </action>
+
+ </widget>
+ 
+ <customwidgets>
+  <customwidget>
+   <class>CADViewer</class>
+   <extends>QWidget</extends>
+   <header>cad_viewer.h</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections>
+  <connection>
+   <sender>actionExit</sender>
+   <signal>triggered()</signal>
+   <receiver>MainWindow</receiver>
+   <slot>close()</slot>
+   <hints>
+    <hint type="sourcelabel"><x>-1</x><y>-1</y></hint>
+    <hint type="destinationlabel"><x>599</x><y>399</y></hint>
+   </hints>
+  </connection>
+ </connections>
+</ui>
