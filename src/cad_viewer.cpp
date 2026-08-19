@@ -43,8 +43,11 @@
 #include <vtkSelectionNode.h>
 #include <vtkInformation.h>
 #include <vtkAxesActor.h>
-#include <vtkCubeAxesActor.h>
 #include <vtkPolyDataMapper.h>
+#include <vtkLine.h>
+#include <vtkVectorText.h>
+#include <vtkFollower.h>
+#include <cstdio>
 #include <vtkMapper.h>
 #include <vtkFeatureEdges.h> 
 #include <vtkCellPicker.h>
@@ -337,16 +340,23 @@ CADViewer::CADViewer(QWidget *parent) : QVTKWidget(parent) {
     this->GetRenderWindow()->GetInteractor()->Initialize();
     m_axesWidget->SetEnabled(1); m_axesWidget->InteractiveOff();
 
-    // 距离参考轴线 (显示 X/Y/Z 坐标刻度)
-    m_cubeAxes = vtkSmartPointer<vtkCubeAxesActor>::New();
-    m_cubeAxes->SetCamera(m_renderer->GetActiveCamera());
-    m_cubeAxes->SetBounds(-1, 1, -1, 1, -1, 1);
-    m_cubeAxes->SetXLabelFormat("%.1f");
-    m_cubeAxes->SetYLabelFormat("%.1f");
-    m_cubeAxes->SetZLabelFormat("%.1f");
-    m_cubeAxes->SetFlyModeToOuterEdges();
-    m_cubeAxes->SetVisibility(false);
-    m_renderer->AddActor(m_cubeAxes);
+    // ---- COMSOL 风格栅格 (三个面贴着几何包围盒) ----
+    m_gridPlanes.resize(3);
+    for (auto& gp : m_gridPlanes) {
+        gp.majorActor = vtkSmartPointer<vtkActor>::New();
+        gp.majorActor->GetProperty()->SetColor(0.55, 0.55, 0.55);
+        gp.majorActor->GetProperty()->SetLineWidth(1.2);
+        gp.majorActor->SetPickable(false);
+        gp.majorActor->SetVisibility(false);
+        gp.minorActor = vtkSmartPointer<vtkActor>::New();
+        gp.minorActor->GetProperty()->SetColor(0.75, 0.75, 0.75);
+        gp.minorActor->GetProperty()->SetLineWidth(1.0);
+        gp.minorActor->GetProperty()->SetOpacity(0.8);
+        gp.minorActor->SetPickable(false);
+        gp.minorActor->SetVisibility(false);
+        m_renderer->AddActor(gp.majorActor);
+        m_renderer->AddActor(gp.minorActor);
+    }
 
     setInteractionModes(false, false, false);
 }
@@ -435,8 +445,7 @@ void CADViewer::loadShape(const TopoDS_Shape& shape) {
         m_idToEdgeActor[faceIdCounter] = edgeActor;
         faceIdCounter++;
     }
-    double b[6]; m_renderer->ComputeVisiblePropBounds(b);
-    if (vtkMath::AreBoundsInitialized(b)) m_cubeAxes->SetBounds(b);
+    updateGridExtent();
     m_renderer->ResetCamera(); this->GetRenderWindow()->Render();
 }
 
@@ -528,6 +537,7 @@ int CADViewer::addOCCShape(const TopoDS_Shape& shape, double r, double g, double
         nFaces++;
     }
     fprintf(stderr, "[DEBUG addOCCShape] firstId=%d, nFaces=%d\n", firstId, nFaces);
+    updateGridExtent();   // 内部创建的体素也更新栅格范围
     m_renderer->ResetCamera();
     GetRenderWindow()->Render();
     return firstId;
@@ -803,9 +813,7 @@ void CADViewer::setViewYZ() { m_renderer->GetActiveCamera()->SetFocalPoint(0,0,0
 void CADViewer::setViewZX() { m_renderer->GetActiveCamera()->SetFocalPoint(0,0,0); m_renderer->GetActiveCamera()->SetPosition(0,-1,0); m_renderer->GetActiveCamera()->SetViewUp(0,0,1); m_renderer->ResetCamera(); m_renderer->ResetCameraClippingRange(); this->GetRenderWindow()->Render(); }
 void CADViewer::resetCameraView() {
     m_renderer->ResetCamera(); m_renderer->ResetCameraClippingRange();
-    // 更新距离参考轴范围
-    double b[6]; m_renderer->ComputeVisiblePropBounds(b);
-    if (vtkMath::AreBoundsInitialized(b)) m_cubeAxes->SetBounds(b);
+    updateGridExtent();
     this->GetRenderWindow()->Render();
 }
 void CADViewer::hideSelected() { m_hiddenFaceIds.insert(m_selectedFaceIds.begin(), m_selectedFaceIds.end()); updateFaceColors(); }
@@ -869,9 +877,7 @@ void CADViewer::loadMesh(const FaceMeshMap& meshData) {
         m_actorToFaceId[meshActor.Get()] = faceId;
     }
 
-    // 更新距离参考轴范围
-    double b[6]; m_renderer->ComputeVisiblePropBounds(b);
-    if (vtkMath::AreBoundsInitialized(b)) m_cubeAxes->SetBounds(b);
+    updateGridExtent();
 
     updateFaceColors();
 }
@@ -1345,12 +1351,7 @@ void CADViewer::loadVtkSliceView(const QString& vtkFilePath, const QString& fiel
     m_scalarBar->GetLabelTextProperty()->SetFontSize(6);
     m_renderer->AddActor2D(m_scalarBar);
 
-    // 更新距离参考轴范围
-    if (m_vtkResultActor) {
-        double b[6]; m_vtkResultActor->GetBounds(b);
-        if (b[1] > b[0]) m_cubeAxes->SetBounds(b);
-        m_cubeAxes->SetVisibility(true);
-    }
+    updateGridExtent();
 
     m_geometryHidden = true;
     m_resultVisible = true;
@@ -1457,20 +1458,232 @@ vtkSmartPointer<vtkActor> makeEdgeActor(const TopoDS_Edge& E, double r, double g
 }
 
 // ====================================================================
-// 几何体显隐控制
+// COMSOL 风格栅格 (工作平面参考线)
 // ====================================================================
-void CADViewer::setCubeAxesVisible(bool v) {
-    if (!m_cubeAxes) return;
-    m_cubeAxes->SetVisibility(v ? 1 : 0);
-    if (v) {
-        m_cubeAxes->GetXAxesLinesProperty()->SetColor(0,0,0);
-        m_cubeAxes->GetYAxesLinesProperty()->SetColor(0,0,0);
-        m_cubeAxes->GetZAxesLinesProperty()->SetColor(0,0,0);
-        for (int a = 0; a < 3; a++) {
-            auto* lp = m_cubeAxes->GetLabelTextProperty(a);
-            if (lp) { lp->SetColor(0,0,0); lp->SetFontSize(5); }
+void CADViewer::setGridVisible(bool v) {
+    m_gridVisible = v;
+    if (v) rebuildGridActor();   // 确保 mapper 已构建 (首次点击/参数修改后)
+    for (auto& gp : m_gridPlanes) {
+        gp.majorActor->SetVisibility(v ? 1 : 0);
+        gp.minorActor->SetVisibility(v ? 1 : 0);
+        for (auto& la : gp.labels) la->SetVisibility(v ? 1 : 0);
+    }
+    GetRenderWindow()->Render();
+}
+
+void CADViewer::setGridSpacing(double major) {
+    if (major <= 0) return;
+    m_gridSpacing = major;
+    if (m_gridVisible) rebuildGridActor();
+}
+
+void CADViewer::setGridSubdivisions(int n) {
+    if (n < 1 || n > 10) return;
+    m_gridSubdiv = n;
+    if (m_gridVisible) rebuildGridActor();
+}
+
+void CADViewer::setGridAutoExtent(bool on) {
+    m_gridAutoExtent = on;
+    if (m_gridVisible) { updateGridExtent(); rebuildGridActor(); }
+}
+
+// 从可见包围盒计算三个面的栅格范围 (自动模式)
+// 平面 0 (XY): z=zmin 底面, 平面 1 (XZ): y=ymin 背面, 平面 2 (YZ): x=xmin 侧面
+// 显式遍历几何/网格/结果 actors 计算组合包围盒
+// (不使用 ComputeVisiblePropBounds: 它受渲染器可见性状态影响, 且会把
+//  栅格 actor 算进去, 导致范围停留在初始化值或无限膨胀)
+bool CADViewer::computeSceneBounds(double b[6]) {
+    bool first = true;
+    auto merge = [&](vtkActor* actor) {
+        if (!actor || !actor->GetVisibility()) return;
+        double ab[6];
+        actor->GetBounds(ab);
+        if (ab[0] > ab[1] || ab[2] > ab[3] || ab[4] > ab[5]) return;  // 未初始化
+        if (first) {
+            for (int i = 0; i < 6; i++) b[i] = ab[i];
+            first = false;
+        } else {
+            b[0] = std::min(b[0], ab[0]); b[1] = std::max(b[1], ab[1]);
+            b[2] = std::min(b[2], ab[2]); b[3] = std::max(b[3], ab[3]);
+            b[4] = std::min(b[4], ab[4]); b[5] = std::max(b[5], ab[5]);
+        }
+    };
+    for (auto& [fid, actor] : m_idToActor)      merge(actor);  // 几何面
+    for (auto& [fid, actor] : m_idToMeshActor)  merge(actor);  // 网格面
+    if (m_vtkResultActor) merge(m_vtkResultActor.Get());       // 结果
+    return !first;
+}
+
+void CADViewer::updateGridExtent() {
+    if (!m_gridAutoExtent) return;   // 手动模式: 不自动更新
+
+    double b[6];
+    if (!computeSceneBounds(b)) {
+        fprintf(stderr, "[Grid] 无可见几何, 保留当前范围\n"); fflush(stderr);
+        return;   // 无几何时保留默认范围
+    }
+
+    const double pad = 0.0;          // 不外扩: 刻度首尾精确 = 几何 min/max
+    double sx = b[1] - b[0], sy = b[3] - b[2], sz = b[5] - b[4];
+    if (sx < 1e-12) sx = 1; if (sy < 1e-12) sy = 1; if (sz < 1e-12) sz = 1;
+    double offset = std::max(sx, std::max(sy, sz)) / 10.0;   // 悬浮距离 = 包围盒最大边长 / 10
+
+    // 三个互不相邻的面, 避免交叉:
+    //   XY 面: z=zmin (底面)     u=x, v=y
+    //   XZ 面: y=ymax (顶背面)   u=x, v=z
+    //   YZ 面: x=xmax (右侧面)   u=y, v=z
+    m_gridRange[0][0] = b[0] - pad * sx;  m_gridRange[0][1] = b[1] + pad * sx;
+    m_gridRange[0][2] = b[2] - pad * sy;  m_gridRange[0][3] = b[3] + pad * sy;
+    m_gridPlanePos[0] = b[4]-offset;   // zmin
+
+    m_gridRange[1][0] = b[0] - pad * sx;  m_gridRange[1][1] = b[1] + pad * sx;
+    m_gridRange[1][2] = b[4] - pad * sz;  m_gridRange[1][3] = b[5] + pad * sz;
+    m_gridPlanePos[1] = b[3]+offset;   // ymax
+
+    m_gridRange[2][0] = b[2] - pad * sy;  m_gridRange[2][1] = b[3] + pad * sy;
+    m_gridRange[2][2] = b[4] - pad * sz;  m_gridRange[2][3] = b[5] + pad * sz;
+    m_gridPlanePos[2] = b[1]+offset;   // xmax
+
+    fprintf(stderr, "[Grid] bounds=(%.2f,%.2f, %.2f,%.2f, %.2f,%.2f) XYrange=(%.1f,%.1f)\n",
+            b[0], b[1], b[2], b[3], b[4], b[5], m_gridRange[0][0], m_gridRange[0][1]);
+    fflush(stderr);
+
+    if (m_gridVisible) rebuildGridActor();
+}
+
+// 重建三个包围盒面的主/次栅格 polydata + 刻度标签
+void CADViewer::rebuildGridActor() {
+    // 数字格式: 按主间距数量级自适应小数位
+    std::string fmt;
+    double a = std::fabs(m_gridSpacing);
+    if (a >= 100.0)      fmt = "%.0f";
+    else if (a >= 1.0)   fmt = "%.1f";
+    else if (a >= 0.01)  fmt = "%.2f";
+    else                 fmt = "%.4g";
+
+    for (int p = 0; p < 3; p++) {
+        double u0 = m_gridRange[p][0], u1 = m_gridRange[p][1];
+        double v0 = m_gridRange[p][2], v1 = m_gridRange[p][3];
+        double w  = m_gridPlanePos[p];
+        double major = m_gridSpacing;
+        double minor = major / std::max(1, m_gridSubdiv);
+
+        // 线数上限保护 (防止超大网格导致卡顿)
+        auto nLines = [&](double step) {
+            int nu = (int)std::floor((u1 - u0) / step + 1e-9) + 1;
+            int nv = (int)std::floor((v1 - v0) / step + 1e-9) + 1;
+            return nu + nv;
+        };
+        if (nLines(major) > 500) {   // 间距过密 → 按 500 条钳制
+            double span = std::max(u1 - u0, v1 - v0);
+            major = span / 250.0;
+            minor = major / std::max(1, m_gridSubdiv);
+        }
+        if (nLines(minor) > 2000) minor = std::max(major / 2, (u1 - u0) / 1000.0);
+
+        // 3D 坐标组装: 平面 (u,v) → (x,y,z)
+        // p=0 (XY): (u,v,w); p=1 (XZ): (u,w,v); p=2 (YZ): (w,u,v)
+        auto makePt = [&](double u, double v) -> std::array<double,3> {
+            if (p == 0) return {u, v, w};
+            if (p == 1) return {u, w, v};
+            return {w, u, v};
+        };
+
+        GridPlaneSet& gp = m_gridPlanes[p];
+
+        // ---- 主栅格线 ----
+        auto ptsM = vtkSmartPointer<vtkPoints>::New();
+        auto linesM = vtkSmartPointer<vtkCellArray>::New();
+        vtkIdType nid = 0;
+        auto addLine = [&](double ua, double va, double ub, double vb) {
+            auto pa = makePt(ua, va), pb = makePt(ub, vb);
+            ptsM->InsertNextPoint(pa[0], pa[1], pa[2]);
+            ptsM->InsertNextPoint(pb[0], pb[1], pb[2]);
+            vtkIdType ids[2] = {nid, nid + 1}; nid += 2;
+            linesM->InsertNextCell(2, ids);
+        };
+        for (double u = u0; u <= u1 + 1e-9; u += major) addLine(u, v0, u, v1);
+        for (double v = v0; v <= v1 + 1e-9; v += major) addLine(u0, v, u1, v);
+        auto pdM = vtkSmartPointer<vtkPolyData>::New();
+        pdM->SetPoints(ptsM); pdM->SetLines(linesM);
+        auto mapperM = vtkSmartPointer<vtkPolyDataMapper>::New();
+        mapperM->SetInputData(pdM);
+        gp.majorActor->SetMapper(mapperM);
+
+        // ---- 次栅格线 (细分) ----
+        auto ptsS = vtkSmartPointer<vtkPoints>::New();
+        auto linesS = vtkSmartPointer<vtkCellArray>::New();
+        nid = 0;
+        auto addLineS = [&](double ua, double va, double ub, double vb) {
+            auto pa = makePt(ua, va), pb = makePt(ub, vb);
+            ptsS->InsertNextPoint(pa[0], pa[1], pa[2]);
+            ptsS->InsertNextPoint(pb[0], pb[1], pb[2]);
+            vtkIdType ids[2] = {nid, nid + 1}; nid += 2;
+            linesS->InsertNextCell(2, ids);
+        };
+        // 次栅格线避开主栅格线位置 (偏移半步长)
+        double half = minor * 0.5;
+        for (double u = u0 + half; u <= u1 + 1e-9; u += minor)
+            if (std::abs(std::fmod((u - u0), major)) > 1e-9) addLineS(u, v0, u, v1);
+        for (double v = v0 + half; v <= v1 + 1e-9; v += minor)
+            if (std::abs(std::fmod((v - v0), major)) > 1e-9) addLineS(u0, v, u1, v);
+        auto pdS = vtkSmartPointer<vtkPolyData>::New();
+        pdS->SetPoints(ptsS); pdS->SetLines(linesS);
+        auto mapperS = vtkSmartPointer<vtkPolyDataMapper>::New();
+        mapperS->SetInputData(pdS);
+        gp.minorActor->SetMapper(mapperS);
+
+        // ---- 主刻度坐标标签 (栅格边缘外侧, 3D 文字参与深度测试, 被几何遮挡) ----
+        for (auto& la : gp.labels) m_renderer->RemoveActor(la);
+        gp.labels.clear();
+
+        double off = (u1 - u0 + v1 - v0) * 0.015;   // 标签离边缘的偏移
+        double fudge = off * 0.5;                    // 沿轴方向微移, 避免文字压线
+        double th = std::max(u1 - u0, v1 - v0) * 0.03;   // 字高 (世界单位, VectorText 默认高 1.0)
+        int nu = (int)std::floor((u1 - u0) / major + 1e-9) + 1;
+        int nv = (int)std::floor((v1 - v0) / major + 1e-9) + 1;
+        // 密度保护: 主刻度线过密时跳过标签
+        if (nu + nv <= 80) {
+            auto addLabel = [&](double u, double v, const char* text) {
+                auto pa = makePt(u, v);
+                // vtkVectorText + vtkFollower: 3D 文字, 面向相机, 参与深度测试
+                // (几何后面的数字会被遮挡, 不再透过几何可见)
+                auto textSrc = vtkSmartPointer<vtkVectorText>::New();
+                textSrc->SetText(text);
+                auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+                mapper->SetInputConnection(textSrc->GetOutputPort());
+                auto label = vtkSmartPointer<vtkFollower>::New();
+                label->SetMapper(mapper);
+                label->SetPosition(pa[0], pa[1], pa[2]);
+                label->SetCamera(m_renderer->GetActiveCamera());
+                label->GetProperty()->SetColor(0.12, 0.12, 0.12);
+                label->GetProperty()->SetLineWidth(1.0);
+                label->SetScale(th);
+                label->SetPickable(false);
+                label->SetVisibility(m_gridVisible ? 1 : 0);  // 跟随栅格状态, 重建后不消失
+                m_renderer->AddActor(label);
+                gp.labels.push_back(label);
+            };
+
+            char buf[64];
+            // u 轴刻度标签: 常规刻度 (不含末端), 循环后强制补 u1(max); u0(min) 含在循环中
+            for (double u = u0; u < u1 - 1e-9; u += major) {
+                std::snprintf(buf, sizeof(buf), fmt.c_str(), u);
+                addLabel(u + fudge, v0 - off, buf);
+            }
+            std::snprintf(buf, sizeof(buf), fmt.c_str(), u1);
+            addLabel(u1 + fudge, v0 - off, buf);   // 补 max
+            // v 轴刻度标签: 同理
+            for (double v = v0; v < v1 - 1e-9; v += major) {
+                std::snprintf(buf, sizeof(buf), fmt.c_str(), v);
+                addLabel(u0 - off, v + fudge, buf);
+            }
+            std::snprintf(buf, sizeof(buf), fmt.c_str(), v1);
+            addLabel(u0 - off, v1 + fudge, buf);   // 补 max
         }
     }
+
     GetRenderWindow()->Render();
 }
 

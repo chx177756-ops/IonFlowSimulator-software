@@ -837,20 +837,53 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(ui->btnZX, &QToolButton::clicked, ui->cadViewerWidget, &CADViewer::setViewZX);
     connect(ui->btnResetHidden, &QToolButton::clicked, ui->cadViewerWidget, &CADViewer::resetHidden);
 
-    // 距离参考线切换按钮 (插在 spacer 之前, 贴着左侧按钮)
-    QToolButton* btnRefAxes = new QToolButton();
-    btnRefAxes->setText("距离参考");
-    btnRefAxes->setCheckable(true);
-    btnRefAxes->setChecked(false);
-    btnRefAxes->setToolTip("显示/隐藏坐标距离参考线");
+    // COMSOL 风格栅格: 显示切换按钮 + 栅格设置按钮 (插在 spacer 之前, 贴着左侧按钮)
+    QToolButton* btnGrid = new QToolButton();
+    btnGrid->setText("栅格");
+    btnGrid->setCheckable(true);
+    btnGrid->setChecked(false);
+    btnGrid->setToolTip("显示/隐藏工作平面栅格");
+    QToolButton* btnGridSettings = new QToolButton();
+    btnGridSettings->setText("栅格设置");
+    btnGridSettings->setToolTip("设置栅格平面/间距/细分");
     QHBoxLayout* toolsLayout = qobject_cast<QHBoxLayout*>(ui->frameGraphicsTools->layout());
     if (toolsLayout) {
         int spacerIdx = toolsLayout->count();
         for (int i = 0; i < toolsLayout->count(); i++)
             if (toolsLayout->itemAt(i)->spacerItem()) { spacerIdx = i; break; }
-        toolsLayout->insertWidget(spacerIdx, btnRefAxes);
+        toolsLayout->insertWidget(spacerIdx, btnGridSettings);
+        toolsLayout->insertWidget(spacerIdx, btnGrid);
     }
-    connect(btnRefAxes, &QToolButton::toggled, [=](bool on){ ui->cadViewerWidget->setCubeAxesVisible(on); });
+    connect(btnGrid, &QToolButton::toggled, [=](bool on){ ui->cadViewerWidget->setGridVisible(on); });
+    connect(btnGridSettings, &QToolButton::clicked, [=]() {
+        QDialog dlg(this);
+        dlg.setWindowTitle("栅格设置");
+        auto* lay = new QVBoxLayout(&dlg);
+        auto* form = new QFormLayout();
+
+        auto* spinSpacing = new QDoubleSpinBox();
+        spinSpacing->setRange(1e-6, 1e9);
+        spinSpacing->setDecimals(6);
+        spinSpacing->setValue(ui->cadViewerWidget->gridSpacing());
+
+        auto* spinSubdiv = new QSpinBox();
+        spinSubdiv->setRange(1, 10);
+        spinSubdiv->setValue(ui->cadViewerWidget->gridSubdivisions());
+
+        form->addRow("主栅格间距:", spinSpacing);
+        form->addRow("每主间距细分:", spinSubdiv);
+        lay->addLayout(form);
+
+        auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+        connect(btnBox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        lay->addWidget(btnBox);
+
+        if (dlg.exec() == QDialog::Accepted) {
+            ui->cadViewerWidget->setGridSpacing(spinSpacing->value());
+            ui->cadViewerWidget->setGridSubdivisions(spinSubdiv->value());
+        }
+    });
 
     // 选择模式: 边界选择 / 对象选择
     m_geomSelectMode = new QComboBox();
