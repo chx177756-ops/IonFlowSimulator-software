@@ -1505,8 +1505,10 @@ void MainWindow::setupSolverUI() {
     QFormLayout* formHPC = new QFormLayout();
 
     m_comboSolverType = new QComboBox();
-    m_comboSolverType->addItem("Takuma CPU (v6)", "CPU");
+    m_comboSolverType->addItem("Takuma-电位排序法 CPU", "CPU");
+    m_comboSolverType->addItem("Tabata CPU", "TABATA_CPU");
     m_comboSolverType->addItem("Tabata GPU (CUDA)", "GPU");
+    m_comboSolverType->addItem("Takuma-双栈法 CPU", "DOUBLESTACK");
     formHPC->addRow("求解器类型:", m_comboSolverType);
 
     m_spinCores = new QSpinBox();
@@ -2413,7 +2415,11 @@ void MainWindow::generateJsonAndCalculate() {
     m_btnCancelCompute->setText("终止计算");
     QString mpiExec = "mpirun";
     QStringList args;
-    QString solverExe = (m_config.solver.solver_type == "GPU") ? "Tabata_GPU" : "Tubular";
+    QString solverExe;
+    if (m_config.solver.solver_type == "GPU") solverExe = "Tabata_GPU";
+    else if (m_config.solver.solver_type == "TABATA_CPU") solverExe = "Tabata_CPU";
+    else if (m_config.solver.solver_type == "DOUBLESTACK") solverExe = "Takuma_DoubleStack_CPU";
+    else solverExe = "Takuma_Potential_CPU"; // 默认 "CPU"
     QString solverPath = QApplication::applicationDirPath() + "/" + solverExe;
     args << "-np" << QString::number(m_config.solver.num_cores) << solverPath << "-c" << configPath;
     m_solverProcess->start(mpiExec, args);

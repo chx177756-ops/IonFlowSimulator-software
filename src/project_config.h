@@ -21,7 +21,7 @@ struct PhysicsSetup {
 
 // 求解器与并行控制设置
 struct SolverSetup {
-    std::string solver_type = "CPU";  // "CPU" = Takuma v6, "GPU" = Tabata GPU
+    std::string solver_type = "CPU";  // "CPU"=Takuma电位, "TABATA_CPU"=Tabata CPU, "GPU"=Tabata GPU, "DOUBLESTACK"=Takuma双层堆叠
     double w_rho = 1.0;
     double goal_convergence = 0.95;
     int max_update_times = 100;

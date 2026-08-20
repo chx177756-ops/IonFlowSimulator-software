@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/hxc1/projects/tubular_bus_tabata_parallel_trygpu/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

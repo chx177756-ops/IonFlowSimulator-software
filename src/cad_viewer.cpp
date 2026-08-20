@@ -209,6 +209,7 @@ public:
 
     void OnMouseMove() override {
         vtkInteractorStyleTrackballCamera::OnMouseMove();
+        if (Viewer) Viewer->updateGridLabelVisibility();   // 旋转时刷新可见边标签
         if (Viewer && Viewer->m_edgeSelectMode) {
             int* pos = this->Interactor->GetEventPosition();
             this->FindPokedRenderer(pos[0], pos[1]);
@@ -238,13 +239,15 @@ public:
 
     void OnMouseWheelForward() override {
         int* pos = this->Interactor->GetEventPosition();
-        this->FindPokedRenderer(pos[0], pos[1]); 
+        this->FindPokedRenderer(pos[0], pos[1]);
         performSmartZoom(this->CurrentRenderer, this->Interactor, pos[0], pos[1], true);
+        if (Viewer) Viewer->updateGridLabelVisibility();
     }
     void OnMouseWheelBackward() override {
         int* pos = this->Interactor->GetEventPosition();
-        this->FindPokedRenderer(pos[0], pos[1]); 
+        this->FindPokedRenderer(pos[0], pos[1]);
         performSmartZoom(this->CurrentRenderer, this->Interactor, pos[0], pos[1], false);
+        if (Viewer) Viewer->updateGridLabelVisibility();
     }
 };
 vtkStandardNewMacro(CustomTrackballStyle);
@@ -618,6 +621,8 @@ void CADViewer::updateFaceColors() {
         if (vis) { meshActor->GetProperty()->SetColor(0.85, 0.88, 0.9); meshActor->GetProperty()->SetOpacity(1.0); }
     }
 
+    updateGridExtent();   // 隐藏/显示几何后, 栅格范围跟随可见几何
+
     this->GetRenderWindow()->Render();
 }
 
@@ -808,12 +813,13 @@ void CADViewer::processBoxSelection(int xmin, int ymin, int xmax, int ymax) {
 void CADViewer::mousePressEvent(QMouseEvent *event) { QVTKWidget::mousePressEvent(event); }
 void CADViewer::wheelEvent(QWheelEvent *event) { QVTKWidget::wheelEvent(event); }
 
-void CADViewer::setViewXY() { m_renderer->GetActiveCamera()->SetFocalPoint(0,0,0); m_renderer->GetActiveCamera()->SetPosition(0,0,1); m_renderer->GetActiveCamera()->SetViewUp(0,1,0); m_renderer->ResetCamera(); m_renderer->ResetCameraClippingRange(); this->GetRenderWindow()->Render(); }
-void CADViewer::setViewYZ() { m_renderer->GetActiveCamera()->SetFocalPoint(0,0,0); m_renderer->GetActiveCamera()->SetPosition(1,0,0); m_renderer->GetActiveCamera()->SetViewUp(0,0,1); m_renderer->ResetCamera(); m_renderer->ResetCameraClippingRange(); this->GetRenderWindow()->Render(); }
-void CADViewer::setViewZX() { m_renderer->GetActiveCamera()->SetFocalPoint(0,0,0); m_renderer->GetActiveCamera()->SetPosition(0,-1,0); m_renderer->GetActiveCamera()->SetViewUp(0,0,1); m_renderer->ResetCamera(); m_renderer->ResetCameraClippingRange(); this->GetRenderWindow()->Render(); }
+void CADViewer::setViewXY() { m_renderer->GetActiveCamera()->SetFocalPoint(0,0,0); m_renderer->GetActiveCamera()->SetPosition(0,0,1); m_renderer->GetActiveCamera()->SetViewUp(0,1,0); m_renderer->ResetCamera(); m_renderer->ResetCameraClippingRange(); updateGridLabelVisibility(); this->GetRenderWindow()->Render(); }
+void CADViewer::setViewYZ() { m_renderer->GetActiveCamera()->SetFocalPoint(0,0,0); m_renderer->GetActiveCamera()->SetPosition(1,0,0); m_renderer->GetActiveCamera()->SetViewUp(0,0,1); m_renderer->ResetCamera(); m_renderer->ResetCameraClippingRange(); updateGridLabelVisibility(); this->GetRenderWindow()->Render(); }
+void CADViewer::setViewZX() { m_renderer->GetActiveCamera()->SetFocalPoint(0,0,0); m_renderer->GetActiveCamera()->SetPosition(0,-1,0); m_renderer->GetActiveCamera()->SetViewUp(0,0,1); m_renderer->ResetCamera(); m_renderer->ResetCameraClippingRange(); updateGridLabelVisibility(); this->GetRenderWindow()->Render(); }
 void CADViewer::resetCameraView() {
     m_renderer->ResetCamera(); m_renderer->ResetCameraClippingRange();
     updateGridExtent();
+    updateGridLabelVisibility();
     this->GetRenderWindow()->Render();
 }
 void CADViewer::hideSelected() { m_hiddenFaceIds.insert(m_selectedFaceIds.begin(), m_selectedFaceIds.end()); updateFaceColors(); }
@@ -1466,8 +1472,11 @@ void CADViewer::setGridVisible(bool v) {
     for (auto& gp : m_gridPlanes) {
         gp.majorActor->SetVisibility(v ? 1 : 0);
         gp.minorActor->SetVisibility(v ? 1 : 0);
-        for (auto& la : gp.labels) la->SetVisibility(v ? 1 : 0);
     }
+    if (!v)
+        for (auto& gp : m_gridPlanes)
+            for (int e = 0; e < 4; e++)
+                for (auto& la : gp.labels[e]) la->SetVisibility(0);
     GetRenderWindow()->Render();
 }
 
@@ -1528,6 +1537,7 @@ void CADViewer::updateGridExtent() {
     double sx = b[1] - b[0], sy = b[3] - b[2], sz = b[5] - b[4];
     if (sx < 1e-12) sx = 1; if (sy < 1e-12) sy = 1; if (sz < 1e-12) sz = 1;
     double offset = std::max(sx, std::max(sy, sz)) / 10.0;   // 悬浮距离 = 包围盒最大边长 / 10
+    m_gridTextHeight = std::max(sx, std::max(sy, sz)) * 0.03;  // 三面统一字高 (全局最大边长 3%)
 
     // 三个互不相邻的面, 避免交叉:
     //   XY 面: z=zmin (底面)     u=x, v=y
@@ -1539,11 +1549,11 @@ void CADViewer::updateGridExtent() {
 
     m_gridRange[1][0] = b[0] - pad * sx;  m_gridRange[1][1] = b[1] + pad * sx;
     m_gridRange[1][2] = b[4] - pad * sz;  m_gridRange[1][3] = b[5] + pad * sz;
-    m_gridPlanePos[1] = b[3]+offset;   // ymax
+    m_gridPlanePos[1] = b[2]-offset;   // ymax
 
     m_gridRange[2][0] = b[2] - pad * sy;  m_gridRange[2][1] = b[3] + pad * sy;
     m_gridRange[2][2] = b[4] - pad * sz;  m_gridRange[2][3] = b[5] + pad * sz;
-    m_gridPlanePos[2] = b[1]+offset;   // xmax
+    m_gridPlanePos[2] = b[0]-offset;   // xmax
 
     fprintf(stderr, "[Grid] bounds=(%.2f,%.2f, %.2f,%.2f, %.2f,%.2f) XYrange=(%.1f,%.1f)\n",
             b[0], b[1], b[2], b[3], b[4], b[5], m_gridRange[0][0], m_gridRange[0][1]);
@@ -1634,21 +1644,26 @@ void CADViewer::rebuildGridActor() {
         mapperS->SetInputData(pdS);
         gp.minorActor->SetMapper(mapperS);
 
-        // ---- 主刻度坐标标签 (栅格边缘外侧, 3D 文字参与深度测试, 被几何遮挡) ----
-        for (auto& la : gp.labels) m_renderer->RemoveActor(la);
-        gp.labels.clear();
+        // ---- 主刻度坐标标签: 四条边全部创建, 按边分组, 相机视角切换可见边 ----
+        for (int e = 0; e < 4; e++) {
+            for (auto& la : gp.labels[e]) m_renderer->RemoveActor(la);
+            gp.labels[e].clear();
+        }
 
-        double off = (u1 - u0 + v1 - v0) * 0.015;   // 标签离边缘的偏移
-        double fudge = off * 0.5;                    // 沿轴方向微移, 避免文字压线
-        double th = std::max(u1 - u0, v1 - v0) * 0.03;   // 字高 (世界单位, VectorText 默认高 1.0)
+        // 标签离边缘的偏移: 5% 跨度, 保证拐角处两个标签不重叠
+        // (拐角两标签距离 off√2 ≈ 2.36×字高 > 1.8×字高文字宽)
+        double off = std::max(u1 - u0, v1 - v0) * 0.05;
+        // 字高: min(全局比例字高, 主间距 35%), 三面统一
+        // 极端长宽比几何下避免相邻标签文字互相遮盖 (3 字符宽 ≈ 1.8×字高 ≤ major)
+        double th = std::min(m_gridTextHeight, major * 0.35);
         int nu = (int)std::floor((u1 - u0) / major + 1e-9) + 1;
         int nv = (int)std::floor((v1 - v0) / major + 1e-9) + 1;
         // 密度保护: 主刻度线过密时跳过标签
         if (nu + nv <= 80) {
-            auto addLabel = [&](double u, double v, const char* text) {
+            // edge: 0=v0(u轴) 1=v1(u轴) 2=u0(v轴) 3=u1(v轴)
+            auto addLabel = [&](double u, double v, int edge, const char* text) {
                 auto pa = makePt(u, v);
                 // vtkVectorText + vtkFollower: 3D 文字, 面向相机, 参与深度测试
-                // (几何后面的数字会被遮挡, 不再透过几何可见)
                 auto textSrc = vtkSmartPointer<vtkVectorText>::New();
                 textSrc->SetText(text);
                 auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
@@ -1661,29 +1676,108 @@ void CADViewer::rebuildGridActor() {
                 label->GetProperty()->SetLineWidth(1.0);
                 label->SetScale(th);
                 label->SetPickable(false);
-                label->SetVisibility(m_gridVisible ? 1 : 0);  // 跟随栅格状态, 重建后不消失
+                label->SetVisibility(0);   // 先隐藏, 由 updateGridLabelVisibility 决定
                 m_renderer->AddActor(label);
-                gp.labels.push_back(label);
+                gp.labels[edge].push_back(label);
             };
 
             char buf[64];
-            // u 轴刻度标签: 常规刻度 (不含末端), 循环后强制补 u1(max); u0(min) 含在循环中
+            // 边 0 (v0 下方): u 轴刻度, 常规刻度 + 补 max
             for (double u = u0; u < u1 - 1e-9; u += major) {
                 std::snprintf(buf, sizeof(buf), fmt.c_str(), u);
-                addLabel(u + fudge, v0 - off, buf);
+                addLabel(u, v0 - off, 0, buf);
             }
             std::snprintf(buf, sizeof(buf), fmt.c_str(), u1);
-            addLabel(u1 + fudge, v0 - off, buf);   // 补 max
-            // v 轴刻度标签: 同理
+            addLabel(u1, v0 - off, 0, buf);
+            // 边 1 (v1 上方): u 轴刻度
+            for (double u = u0; u < u1 - 1e-9; u += major) {
+                std::snprintf(buf, sizeof(buf), fmt.c_str(), u);
+                addLabel(u, v1 + off, 1, buf);
+            }
+            std::snprintf(buf, sizeof(buf), fmt.c_str(), u1);
+            addLabel(u1, v1 + off, 1, buf);
+            // 边 2 (u0 左侧): v 轴刻度
             for (double v = v0; v < v1 - 1e-9; v += major) {
                 std::snprintf(buf, sizeof(buf), fmt.c_str(), v);
-                addLabel(u0 - off, v + fudge, buf);
+                addLabel(u0 - off, v, 2, buf);
             }
             std::snprintf(buf, sizeof(buf), fmt.c_str(), v1);
-            addLabel(u0 - off, v1 + fudge, buf);   // 补 max
+            addLabel(u0 - off, v1, 2, buf);
+            // 边 3 (u1 右侧): v 轴刻度
+            for (double v = v0; v < v1 - 1e-9; v += major) {
+                std::snprintf(buf, sizeof(buf), fmt.c_str(), v);
+                addLabel(u1 + off, v, 3, buf);
+            }
+            std::snprintf(buf, sizeof(buf), fmt.c_str(), v1);
+            addLabel(u1 + off, v1, 3, buf);
         }
     }
 
+    updateGridLabelVisibility();
+    GetRenderWindow()->Render();
+}
+
+// 相机变化时切换可见边标签: X/Y/Z 三个坐标方向各选一条朝向观察者的边
+// (边外法线与观察方向点积最大的边 = 离观察者最近的边)
+void CADViewer::updateGridLabelVisibility() {
+    if (!m_gridVisible) return;
+
+    double camPos[3];
+    m_renderer->GetActiveCamera()->GetPosition(camPos);
+
+    // 边外法线表 (世界坐标): [面][边0..3] → (nx,ny,nz)
+    // 面0 (XY, z=zmin): v0→-y v1→+y u0→-x u1→+x
+    // 面1 (XZ, y=ymax): v0→-z v1→+z u0→-x u1→+x
+    // 面2 (YZ, x=xmax): v0→-z v1→+z u0→-y u1→+y
+    static const double edgeNormals[3][4][3] = {
+        {{0,-1,0},{0,1,0},{-1,0,0},{1,0,0}},
+        {{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}},
+        {{0,0,-1},{0,0,1},{0,-1,0},{0,1,0}}
+    };
+
+    // 每面中心
+    double centers[3][3];
+    for (int p = 0; p < 3; p++) {
+        double uc = 0.5 * (m_gridRange[p][0] + m_gridRange[p][1]);
+        double vc = 0.5 * (m_gridRange[p][2] + m_gridRange[p][3]);
+        double w  = m_gridPlanePos[p];
+        if (p == 0)      { centers[p][0] = uc; centers[p][1] = vc; centers[p][2] = w; }
+        else if (p == 1) { centers[p][0] = uc; centers[p][1] = w;  centers[p][2] = vc; }
+        else             { centers[p][0] = w;  centers[p][1] = uc; centers[p][2] = vc; }
+    }
+
+    // 先隐藏全部边标签
+    for (int p = 0; p < 3; p++)
+        for (int e = 0; e < 4; e++)
+            for (auto& l : m_gridPlanes[p].labels[e]) l->SetVisibility(0);
+
+    // 每个坐标方向的候选边: {面, 边}
+    // 面0 边0/1 = u轴刻度标 X; 面0 边2/3 = v轴刻度标 Y
+    // 面1 边0/1 = u轴刻度标 X; 面1 边2/3 = v轴刻度标 Z
+    // 面2 边0/1 = u轴刻度标 Y; 面2 边2/3 = v轴刻度标 Z
+    static const int candidates[3][4][2] = {
+        {{0,0},{0,1},{1,0},{1,1}},   // X 方向
+        {{0,2},{0,3},{2,0},{2,1}},   // Y 方向
+        {{1,2},{1,3},{2,2},{2,3}}    // Z 方向
+    };
+
+    for (int d = 0; d < 3; d++) {
+        int bestF = -1, bestE = -1;
+        double bestDot = -1e30;
+        for (int k = 0; k < 4; k++) {
+            int f = candidates[d][k][0], e = candidates[d][k][1];
+            // 观察方向 (相机 → 面中心)
+            double vx = camPos[0] - centers[f][0];
+            double vy = camPos[1] - centers[f][1];
+            double vz = camPos[2] - centers[f][2];
+            double len = std::sqrt(vx*vx + vy*vy + vz*vz);
+            if (len < 1e-12) continue;
+            double dot = (edgeNormals[f][e][0]*vx + edgeNormals[f][e][1]*vy + edgeNormals[f][e][2]*vz) / len;
+            if (dot > bestDot) { bestDot = dot; bestF = f; bestE = e; }
+        }
+        if (bestF >= 0)
+            for (auto& l : m_gridPlanes[bestF].labels[bestE]) l->SetVisibility(1);
+    }
     GetRenderWindow()->Render();
 }
 

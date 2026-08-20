@@ -1,5 +1,0 @@
-/home/hxc1/projects/tubular_bus_tabata_parallel_trygpu/CMakeFiles/Tubular.dir
-/home/hxc1/projects/tubular_bus_tabata_parallel_trygpu/CMakeFiles/partition_mesh.dir
-/home/hxc1/projects/tubular_bus_tabata_parallel_trygpu/CMakeFiles/gmsh_partition_to_mfem.dir
-/home/hxc1/projects/tubular_bus_tabata_parallel_trygpu/CMakeFiles/edit_cache.dir
-/home/hxc1/projects/tubular_bus_tabata_parallel_trygpu/CMakeFiles/rebuild_cache.dir

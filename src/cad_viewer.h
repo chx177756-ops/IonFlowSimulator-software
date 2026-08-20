@@ -94,6 +94,8 @@ private:
 
     void updateGridExtent();               // 从可见包围盒计算栅格范围 (自动模式)
     void rebuildGridActor();               // 重建主/次栅格 polydata
+    // 相机变化时切换可见边标签 (每面只保留朝向观察者的最外侧边)
+    void updateGridLabelVisibility();
     // 显式遍历几何/网格/结果 actors 计算组合包围盒 (不依赖渲染器可见性状态)
     bool computeSceneBounds(double b[6]);
 
@@ -107,7 +109,8 @@ private:
     struct GridPlaneSet {
         vtkSmartPointer<vtkActor> majorActor;               // 主栅格线
         vtkSmartPointer<vtkActor> minorActor;               // 次栅格线
-        std::vector<vtkSmartPointer<vtkFollower>> labels;   // 刻度数字 (3D, 参与深度测试)
+        // 刻度数字按边分组: [3面][4边] (0=v0 1=v1 2=u0 3=u1), 按相机视角切换可见边
+        std::vector<vtkSmartPointer<vtkFollower>> labels[4];
     };
     std::vector<GridPlaneSet> m_gridPlanes;  // [0]=XY(z=zmin) [1]=XZ(y=ymax) [2]=YZ(x=xmax) 互不相邻不交叉
     bool m_gridVisible = false;
@@ -116,6 +119,7 @@ private:
     bool m_gridAutoExtent = true;
     double m_gridRange[3][4] = {{-50, 50, -50, 50}, {-50, 50, -50, 50}, {-50, 50, -50, 50}};  // 每平面两轴范围
     double m_gridPlanePos[3] = {0.0, 0.0, 0.0};   // 每平面固定轴位置 (zmin/ymin/xmin)
+    double m_gridTextHeight = 0.02;     // 刻度字高 (包围盒最大边长比例, 三面统一)
 
     std::map<vtkActor*, int> m_actorToFaceId;
     std::map<int, vtkActor*> m_idToActor;
