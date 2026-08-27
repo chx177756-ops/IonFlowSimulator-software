@@ -103,6 +103,10 @@ int main(int argc, char *argv[])
     int set_updatetimes = config["solver"]["max_update_times"];
     double tolerance_E = config["solver"]["tolerance_E"];
     double tolerance_rho = config["solver"]["tolerance_rho"];
+    // 防假收敛：一次迭代即收敛时电荷整体衰减因子（1.0 = 禁用）
+    double rho_decay_factor = config["solver"].value("rho_decay_factor", 0.9);
+    // 最大衰减次数（0 = 禁用）
+    int max_decay_times = config["solver"].value("max_decay_times", 3);
 
     // 解析动态边界参数
     std::map<int, double> bdr_voltages;
@@ -339,6 +343,7 @@ int main(int argc, char *argv[])
     int count_iteration = 0;
     double rate_convergence = 0.0;
     int count_update = 0;
+    int decay_count = 0;   // 已衰减次数（防假收敛用）
 
     bool run_main_loop = true;
     if (global_corona_count == 0) {
@@ -356,6 +361,10 @@ int main(int argc, char *argv[])
         for (int idx : active_corona_dofs) if (idx >=0 && idx < numLocalDofs) rho_local(idx) = rho_surface; // 真正起晕的极
     }
     t_init_setup.Stop();
+
+    // 确保输出文件夹存在（迭代循环内每轮写 rho_convergence_x.txt 需要）
+    if (my_rank == 0) mkdir(output_folder.c_str(), 0777);
+    MPI_Barrier(comm);
 
     // ---------------- 迭代循环 ----------------
     ParGridFunction v_total(&vector_fes);
@@ -427,17 +436,13 @@ int main(int argc, char *argv[])
 
             double max_rel_local = 0.0;
             double max_abs_local = 0.0;
-            const double eps_denom = 1e-16; 
-            const double ABS_THRESHOLD = 1e-3; 
+            const double eps_denom = 1e-16;
 
+            // 无条件统计全网格最大相对/绝对变化（诊断指标，不做显著电荷过滤）
             for (int i = 0; i < numLocalDofs; ++i) {
-                double val_calc = std::abs(rho_local(i));
                 double val_prev = std::abs(rho_prev(i));
                 double diff = std::abs(rho_local(i) - rho_prev(i));
-                double rel = 0.0;
-                if (val_calc >= ABS_THRESHOLD || val_prev >= ABS_THRESHOLD) {
-                    rel = diff / (val_prev + eps_denom);
-                }
+                double rel = diff / (val_prev + eps_denom);
                 if (rel > max_rel_local) max_rel_local = rel;
                 if (diff > max_abs_local) max_abs_local = diff;
             }
@@ -452,12 +457,17 @@ int main(int argc, char *argv[])
             long long local_count_below = 0;
             long long local_total_true = 0;
             
+            // 收敛率只考核"显著电荷"节点：新旧电荷密度任一 ≥ ABS_THRESHOLD 才计入，
+            // "前后都小"的节点（物理可忽略）不参与考核、不占用未收敛名额
+            const double ABS_THRESHOLD = 1e+3;
             for (int ld = 0; ld < numLocalDofs; ++ld) {
                 HYPRE_BigInt gd = scalar_fes.GetGlobalTDofNumber(ld);
                 if (gd >= my_true_lo && gd <= my_true_hi) {
-                    ++local_total_true; 
-                    if (std::abs(rho_local(ld) - rho_prev(ld)) / (std::abs(rho_prev(ld)) + eps_denom) < tolerance_rho) 
-                        ++local_count_below;
+                    if (std::abs(rho_local(ld)) >= ABS_THRESHOLD || std::abs(rho_prev(ld)) >= ABS_THRESHOLD) {
+                        ++local_total_true;
+                        if (std::abs(rho_local(ld) - rho_prev(ld)) / (std::abs(rho_prev(ld)) + eps_denom) < tolerance_rho)
+                            ++local_count_below;
+                    }
                 }
             }
             long long global_count_below = 0;
@@ -472,10 +482,71 @@ int main(int argc, char *argv[])
                     max_rela_error_rho, max_abs_global, rate_convergence);
             }
 
+            // ---- 输出本轮收敛状态 rho_convergence_{n}.txt（与收敛率判据同口径）----
+            // -1=不参与考核（前后都小）  0=收敛  1=未收敛
+            {
+                HYPRE_BigInt local_true_count = my_true_hi - my_true_lo + 1;
+                std::vector<int> local_flags(local_true_count, -1);
+                for (int ld = 0; ld < numLocalDofs; ++ld) {
+                    HYPRE_BigInt gd = scalar_fes.GetGlobalTDofNumber(ld);
+                    if (gd >= my_true_lo && gd <= my_true_hi) {
+                        if (std::abs(rho_local(ld)) >= ABS_THRESHOLD || std::abs(rho_prev(ld)) >= ABS_THRESHOLD) {
+                            double rel = std::abs(rho_local(ld) - rho_prev(ld)) / (std::abs(rho_prev(ld)) + eps_denom);
+                            local_flags[gd - my_true_lo] = (rel < tolerance_rho) ? 0 : 1;
+                        }
+                        // 非显著节点保持 -1
+                    }
+                }
+                std::vector<int> counts(num_procs), displs(num_procs);
+                for (int r = 0; r < num_procs; ++r) {
+                    counts[r] = (int)(trueOffsets[r+1] - trueOffsets[r]);
+                    displs[r] = (int)trueOffsets[r];   // 基于 0 的位移（trueOffsets[0]=0）
+                }
+                std::vector<int> recv_all;
+                if (my_rank == 0) {
+                    recv_all.resize((int)trueOffsets[num_procs]);
+                    MPI_Gatherv(local_flags.data(), (int)local_true_count, MPI_INT,
+                                recv_all.data(), counts.data(), displs.data(), MPI_INT, 0, comm);
+                    std::string fname = output_folder + "/rho_convergence_" + std::to_string(count_iteration) + ".txt";
+                    std::ofstream fout(fname);
+                    if (fout.is_open()) {
+                        for (int v : recv_all) fout << v << "\n";
+                        fout.close();
+                        printf("Iter %d: wrote %s (%zu nodes)\n", count_iteration, fname.c_str(), recv_all.size());
+                    }
+                } else {
+                    MPI_Gatherv(local_flags.data(), (int)local_true_count, MPI_INT,
+                                nullptr, nullptr, nullptr, MPI_INT, 0, comm);
+                }
+            }
+
             if (rate_convergence >= Goal_convergence)
             {
-                t_loop_overhead.Stop(); 
-                t_poisson.Start();      
+                t_loop_overhead.Stop();
+
+                // [输出] 达到收敛指标时：未收敛（判 1）节点中电荷密度值的最大值
+                {
+                    double max_rho_unconv_local = 0.0;
+                    for (int ld = 0; ld < numLocalDofs; ++ld) {
+                        HYPRE_BigInt gd = scalar_fes.GetGlobalTDofNumber(ld);
+                        if (gd >= my_true_lo && gd <= my_true_hi) {
+                            if (std::abs(rho_local(ld)) >= ABS_THRESHOLD || std::abs(rho_prev(ld)) >= ABS_THRESHOLD) {
+                                double rel = std::abs(rho_local(ld) - rho_prev(ld)) / (std::abs(rho_prev(ld)) + eps_denom);
+                                if (rel >= tolerance_rho) {
+                                    double rv = std::abs(rho_local(ld));
+                                    if (rv > max_rho_unconv_local) max_rho_unconv_local = rv;
+                                }
+                            }
+                        }
+                    }
+                    double max_rho_unconv_global = 0.0;
+                    MPI_Allreduce(&max_rho_unconv_local, &max_rho_unconv_global, 1, MPI_DOUBLE, MPI_MAX, comm);
+                    if (my_rank == 0)
+                        printf("Convergence rate reached (%.3f): max |rho| among unconverged nodes = %.6e\n",
+                               rate_convergence, max_rho_unconv_global);
+                }
+
+                t_poisson.Start();
                 
                 ParGridFunction phi_new(&scalar_fes);
                 poisson_solver.Solve(rho_local, phi_new);
@@ -534,6 +605,18 @@ int main(int argc, char *argv[])
 
                 if (rela_error_E < tolerance_E) {
                     if (my_rank == 0) printf("Converged after %d iterations.\n", count_iteration);
+                    // 防假收敛：一轮即收敛且未超过衰减上限 → 全空间电荷 × 因子后重新迭代
+                    if (count_iteration == 1 && decay_count < max_decay_times && rho_decay_factor < 1.0) {
+                        ++decay_count;
+                        for (int i = 0; i < numLocalDofs; ++i) rho_local(i) *= rho_decay_factor;
+                        scalar_fes.GroupComm().Bcast<double>(rho_local.GetData());
+                        rela_error_E = 1.0;      // 关键：必须重置，否则 while 条件为假直接退出
+                        count_iteration = 0;     // 重新计迭代轮数
+                        if (my_rank == 0) printf("1-iteration convergence suspected: rho scaled by %.2f, re-iterating (decay %d/%d).\n",
+                            rho_decay_factor, decay_count, max_decay_times);
+                        t_loop_overhead.Stop();  // 配对 :503 的 Start，保持计时器平衡
+                        continue;
+                    }
                     t_loop_overhead.Stop();
                     break;
                 } else {
@@ -576,6 +659,37 @@ int main(int argc, char *argv[])
         ParGridFunction nodeE_final(&vector_fes);
         ParGridFunction nodeEn_final(&scalar_fes);
         GetNodeE(E_elem_final, mesh, Volume, vector_fes, nodeE_final, nodeEn_final);
+
+        // [输出] ground 边界合成电场最大值与平均值（程序结束后）
+        {
+            int ground_tag = -1;
+            for (const auto& bdr : config["boundaries"]) {
+                if (bdr.value("name", "") == "ground") { ground_tag = bdr["tag"]; break; }
+            }
+            if (ground_tag < 0) {
+                if (my_rank == 0) printf("Ground boundary not found in config (name='ground'), skip E stats.\n");
+            } else {
+                auto gdofs = collect_boundary_dofs(ground_tag);
+                double maxE_local = 0.0, sumE_local = 0.0;
+                long long cnt_local = 0;
+                for (int idx : gdofs) {
+                    if (idx < 0 || idx >= nodeEn_final.Size()) continue;
+                    double val = nodeEn_final(idx);
+                    if (val > maxE_local) maxE_local = val;
+                    sumE_local += val; ++cnt_local;
+                }
+                double maxE_global = 0.0, sumE_global = 0.0;
+                long long cnt_global = 0;
+                MPI_Allreduce(&maxE_local, &maxE_global, 1, MPI_DOUBLE, MPI_MAX, comm);
+                MPI_Allreduce(&sumE_local, &sumE_global, 1, MPI_DOUBLE, MPI_SUM, comm);
+                MPI_Allreduce(&cnt_local, &cnt_global, 1, MPI_LONG_LONG, MPI_SUM, comm);
+                if (my_rank == 0) {
+                    double meanE = (cnt_global > 0) ? sumE_global / cnt_global : 0.0;
+                    printf("Ground synthetic E: max=%.6e, mean=%.6e (nodes=%lld)\n",
+                           maxE_global, meanE, cnt_global);
+                }
+            }
+        }
 
         // 将 rho_local (Vector) 包装为 ParGridFunction，以便 VTK 输出
         ParGridFunction rho_gf(&scalar_fes);

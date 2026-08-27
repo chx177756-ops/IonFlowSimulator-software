@@ -29,6 +29,8 @@
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QPushButton>
+#include <QToolButton>
+#include <QGridLayout>
 #include <thread>
 #include <QDir>
 #include <QScrollBar>
@@ -109,26 +111,91 @@
 
 using json = nlohmann::json;
 
+// ====================================================================
+// 流式布局: 一行放不下时自动换行 (参考 Qt 官方 Custom Layout Example)
+// 用于: 几何操作面板 + 画布上方视图/选择功能栏, 画布变窄时自动换行成多行
+// ====================================================================
+class FlowLayout : public QLayout {
+public:
+    explicit FlowLayout(QWidget* parent = nullptr, int hSpacing = 6, int vSpacing = 6)
+        : QLayout(parent), m_hSpace(hSpacing), m_vSpace(vSpacing) {}
+    ~FlowLayout() { while (QLayoutItem* item = takeAt(0)) delete item; }
+
+    void addItem(QLayoutItem* item) override { itemList.append(item); }
+    int count() const override { return itemList.size(); }
+    QLayoutItem* itemAt(int index) const override { return itemList.value(index); }
+    QLayoutItem* takeAt(int index) override {
+        if (index >= 0 && index < itemList.size()) return itemList.takeAt(index);
+        return nullptr;
+    }
+    Qt::Orientations expandingDirections() const override { return {}; }
+    bool hasHeightForWidth() const override { return true; }
+    int heightForWidth(int width) const override { return doLayout(QRect(0, 0, width, 0), true); }
+    QSize sizeHint() const override { return minimumSize(); }
+    QSize minimumSize() const override {
+        QSize size;
+        for (const QLayoutItem* item : itemList) size = size.expandedTo(item->minimumSize());
+        const QMargins m = contentsMargins();
+        size += QSize(m.left() + m.right(), m.top() + m.bottom());
+        return size;
+    }
+    void setGeometry(const QRect& rect) override {
+        QLayout::setGeometry(rect);
+        doLayout(rect, false);
+    }
+
+private:
+    int doLayout(const QRect& rect, bool testOnly) const {
+        const QMargins m = contentsMargins();
+        int x = rect.x() + m.left();
+        int y = rect.y() + m.top();
+        int right = rect.right() - m.right();
+        int lineHeight = 0;
+        for (QLayoutItem* item : itemList) {
+            int w = item->sizeHint().width();
+            int nextX = x + w + m_hSpace;
+            if (nextX - m_hSpace > right && lineHeight > 0) {   // 放不下 → 换行
+                x = rect.x() + m.left();
+                y += lineHeight + m_vSpace;
+                nextX = x + w + m_hSpace;
+                lineHeight = 0;
+            }
+            if (!testOnly) item->setGeometry(QRect(QPoint(x, y), item->sizeHint()));
+            x = nextX;
+            lineHeight = qMax(lineHeight, item->sizeHint().height());
+        }
+        return y + lineHeight - rect.y() + m.bottom();
+    }
+
+    QList<QLayoutItem*> itemList;
+    int m_hSpace, m_vSpace;
+};
+
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow) {
     ui->setupUi(this);
 
     this->setStyleSheet(R"(
         QMainWindow { background-color: #F3F5F8; }
-        QDockWidget { border: 1px solid #D1D5DB; }
+        QDockWidget { border: 1px solid #D1D5DB; font-size: 16px; }
         QDockWidget::title { background-color: #E5E7EB; padding: 6px; font-weight: bold; color: #374151; }
         QGroupBox { border: 1px solid #CED4DA; border-radius: 6px; margin-top: 14px; background-color: #FAFAFA; }
-        QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 5px; color: #2B5797; font-weight: bold; }
-        QTreeWidget, QTableWidget, QListWidget { border: 1px solid #CED4DA; border-radius: 4px; background-color: #FFFFFF; alternate-background-color: #F8F9FA; }
-        QHeaderView::section { background-color: #E9ECEF; padding: 4px; border: 1px solid #DEE2E6; font-weight: bold; }
-        QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { border: 1px solid #CED4DA; border-radius: 4px; padding: 4px 8px; background-color: #FFFFFF; selection-background-color: #007BFF; }
+        QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 5px; color: #2B5797; font-weight: bold; font-size: 13px; }
+        QTreeWidget, QTableWidget, QListWidget { border: 1px solid #CED4DA; border-radius: 4px; background-color: #FFFFFF; alternate-background-color: #F8F9FA; font-size: 13px; }
+        QHeaderView::section { background-color: #E9ECEF; padding: 4px; border: 1px solid #DEE2E6; font-weight: bold; font-size: 13px; }
+        QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { border: 1px solid #CED4DA; border-radius: 4px; padding: 4px 8px; background-color: #FFFFFF; selection-background-color: #007BFF; font-size: 13px; }
         QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border: 1px solid #80BDFF; }
-        QPushButton { background-color: #F8F9FA; border: 1px solid #CED4DA; border-radius: 4px; padding: 6px 12px; color: #212529; font-weight: 500; }
+        QPushButton { background-color: #F8F9FA; border: 1px solid #CED4DA; border-radius: 4px; padding: 6px 12px; color: #212529; font-weight: 500; font-size: 13px; }
         QPushButton:hover { background-color: #E2E6EA; border-color: #DAE0E5; }
         QPushButton:pressed { background-color: #DAE0E5; border-color: #D3D9DF; }
         QPushButton:disabled { background-color: #E9ECEF; color: #ADB5BD; }
         QPushButton#btnGenerateMesh, QPushButton#btnCalculate, QPushButton#btnRenderPost { background-color: #2B5797; color: white; border: none; }
         QPushButton#btnGenerateMesh:hover, QPushButton#btnCalculate:hover, QPushButton#btnRenderPost:hover { background-color: #1E3F70; }
         QPushButton#btnGenerateMesh:pressed, QPushButton#btnCalculate:pressed, QPushButton#btnRenderPost:pressed { background-color: #152C4D; }
+        QLabel, QCheckBox, QToolButton, QTabBar::tab { font-size: 13px; }
+        QMenuBar { font-size: 13px; }
+        QMenuBar::item { font-size: 13px; }
+        QMenu { font-size: 13px; }
+        QMenu::item { font-size: 13px; }
     )");
 
     int maxThreads = std::thread::hardware_concurrency();
@@ -175,24 +242,39 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     ui->dockModelBuilder->setFeatures(QDockWidget::DockWidgetMovable);
     ui->dockSettings->setFeatures(QDockWidget::DockWidgetMovable);
-    ui->dockSettings->setMinimumWidth(350); 
-    ui->dockSettings->setMaximumWidth(450); 
     this->splitDockWidget(ui->dockModelBuilder, ui->dockSettings, Qt::Horizontal);
 
     QDockWidget* dockConsole = new QDockWidget("消息与系统日志", this);
     dockConsole->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetClosable);
     dockConsole->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::RightDockWidgetArea | Qt::LeftDockWidgetArea);
 
+    // 停靠窗标题字号: 统一放大为 16px (QSS 的 ::title 不支持 font, 需直接设置 QFont; 子控件有 13px 规则覆盖不受影响)
+    QFont dockTitleFont = this->font();
+    dockTitleFont.setPixelSize(16);
+    ui->dockModelBuilder->setFont(dockTitleFont);
+    ui->dockSettings->setFont(dockTitleFont);
+    dockConsole->setFont(dockTitleFont);
+
     m_textConsole = new QTextEdit();
     m_textConsole->setReadOnly(true);
-    m_textConsole->setMinimumHeight(150);
     m_textConsole->setStyleSheet(R"(
-        QTextEdit { background-color: #1E1E1E; color: #CCCCCC; font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; border: none; padding: 8px; line-height: 1.5; }
+        QTextEdit { background-color: #1E1E1E; color: #CCCCCC; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; border: none; padding: 8px; line-height: 1.5; }
     )");
     dockConsole->setWidget(m_textConsole);
     this->setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
     this->setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
     this->addDockWidget(Qt::BottomDockWidgetArea, dockConsole);
+
+    // 设置停靠窗内容包一层滚动区: 使宽度可自由伸缩
+    // (否则 QStackedWidget 的 minimumSizeHint 取所有页面最大值, 会把 dock 最小宽度撑死)
+    {
+        QWidget* oldContent = ui->dockSettings->widget();   // dockWidgetContents_2 (含 stackedWidgetSettings)
+        auto* settingsScroll = new QScrollArea(ui->dockSettings);
+        settingsScroll->setWidgetResizable(true);
+        settingsScroll->setFrameShape(QFrame::NoFrame);
+        settingsScroll->setWidget(oldContent);
+        ui->dockSettings->setWidget(settingsScroll);
+    }
 
     QStatusBar* statBar = this->statusBar();
     m_progressBar = new QProgressBar();
@@ -666,96 +748,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     setupToggleBtn(m_btnAddSubIn, m_listBoolSubIn);
     setupToggleBtn(m_btnAddSubTool, m_listBoolSubTool);
 
-    // ---- 构建按钮 ----
-    connect(btnBuild, &QPushButton::clicked, [=]() mutable {
+    // ---- 构建按钮 (逻辑在 buildGeometryFromUI, 与工具栏"全部构建"共用) ----
+    connect(btnBuild, &QPushButton::clicked, this, [=]() {
         // 使用已记录的选中节点索引, 而非 currentItem (避免竞态)
-        int idx = m_lastGeomIdx;
-        if (idx < 0 || idx >= (int)m_geomNodes.size()) return;
-        // 变换类型: 先让 saveGeomNodeFromUI 保存通用参数, 再覆盖变换特有参数
-        std::vector<int> savedInputIndices;
-        auto& node = m_geomNodes[idx];
-        bool isXfm = (node.type=="平移"||node.type=="旋转"||node.type=="镜像"||node.type=="缩放"||node.type=="偏移"
-                       ||node.type=="倒圆角"||node.type=="倒斜角"||node.type=="扫掠"
-                       ||node.type=="线性阵列"||node.type=="圆形阵列");
-        if (isXfm) {
-            QListWidget* lw = nullptr;
-            if (node.type=="平移") lw=m_listXfmT; else if (node.type=="旋转") lw=m_listXfmR;
-            else if (node.type=="镜像") lw=m_listXfmM; else if (node.type=="缩放") lw=m_listXfmS;
-            else if (node.type=="偏移") lw=m_listXfmO;
-            else if (node.type=="倒圆角") {
-                lw=m_listFilletEdges; node.w = m_spinFilletR->value();
-                node.edgeSelections.clear(); node.inputIndices.clear();
-                for (int i=0; i<lw->count(); i++) {
-                    int ni = lw->item(i)->data(Qt::UserRole).toInt();
-                    int ei = lw->item(i)->data(Qt::UserRole+1).toInt();
-                    node.edgeSelections.push_back({ni, ei});
-                    if (std::find(node.inputIndices.begin(),node.inputIndices.end(),ni)==node.inputIndices.end())
-                        node.inputIndices.push_back(ni);
-                }
-            } else if (node.type=="倒斜角") {
-                lw=m_listChamfEdges; node.w = m_spinChamfD->value();
-                node.edgeSelections.clear(); node.inputIndices.clear();
-                for (int i=0; i<lw->count(); i++) {
-                    int ni = lw->item(i)->data(Qt::UserRole).toInt();
-                    int ei = lw->item(i)->data(Qt::UserRole+1).toInt();
-                    node.edgeSelections.push_back({ni, ei});
-                    if (std::find(node.inputIndices.begin(),node.inputIndices.end(),ni)==node.inputIndices.end())
-                        node.inputIndices.push_back(ni);
-                }
-            }
-            else if (node.type=="扫掠") {
-                // 扫掠: 截面存inputIndices+面索引, 路径边存edgeSelections
-                node.inputIndices.clear(); node.edgeSelections.clear();
-                if (m_listSwProf->count() > 0) {
-                    node.inputIndices.push_back(m_listSwProf->item(0)->data(Qt::UserRole).toInt());
-                    node.sweepProfileFaceIdx = m_listSwProf->item(0)->data(Qt::UserRole+1).toInt();
-                }
-                for (int i=0; i<m_listSwPath->count(); i++) {
-                    int ni = m_listSwPath->item(i)->data(Qt::UserRole).toInt();
-                    int ei = m_listSwPath->item(i)->data(Qt::UserRole+1).toInt();
-                    node.edgeSelections.push_back({ni, ei});
-                }
-            } else if (node.type=="线性阵列") lw=m_listArrLin;
-            else if (node.type=="圆形阵列") lw=m_listArrCir;
-            if (lw) for (int i=0; i<lw->count(); i++) savedInputIndices.push_back(lw->item(i)->data(Qt::UserRole).toInt());
-        }
-        saveGeomNodeFromUI(idx);
-        // 变换参数必须在 saveGeomNodeFromUI 之后设置 (避免被覆盖)
-        if (isXfm) {
-            if (node.type != "扫掠") node.inputIndices = savedInputIndices;
-            auto* pg = m_geomStackPages->currentWidget();
-            QList<QDoubleSpinBox*> sps = pg ? pg->findChildren<QDoubleSpinBox*>() : QList<QDoubleSpinBox*>();
-            QList<QComboBox*> cmbs = pg ? pg->findChildren<QComboBox*>() : QList<QComboBox*>();
-            QList<QCheckBox*> chks = pg ? pg->findChildren<QCheckBox*>() : QList<QCheckBox*>();
-            if (node.type=="平移" && sps.size()>=3) { node.px=sps[0]->value(); node.py=sps[1]->value(); node.pz=sps[2]->value(); }
-            else if (node.type=="旋转" && sps.size()>=4) { node.rotAxis=(cmbs.size()>=1?cmbs[0]->currentIndex():0); node.rotAng=sps[0]->value(); node.w=sps[1]->value(); node.h=sps[2]->value(); node.d=sps[3]->value(); }
-            else if (node.type=="镜像" && cmbs.size()>=1 && sps.size()>=1) { node.rotAxis=cmbs[0]->currentIndex(); node.d=sps[0]->value(); }
-            else if (node.type=="缩放" && sps.size()>=4) { node.w=sps[0]->value(); node.px=sps[1]->value(); node.py=sps[2]->value(); node.pz=sps[3]->value(); }
-            else if (node.type=="偏移" && sps.size()>=1) { node.w=sps[0]->value(); }
-            if (!chks.isEmpty()) node.keepInputs = chks[0]->isChecked();
-            // 新操作参数
-            if (node.type=="倒圆角") node.w = m_spinFilletR->value();
-            else if (node.type=="倒斜角") node.w = m_spinChamfD->value();
-            else if (node.type=="线性阵列") {
-                node.rotAxis = m_cmbArrDir->currentIndex();
-                node.px = (node.rotAxis==0) ? m_spArrSpc->value() : 0;
-                node.py = (node.rotAxis==1) ? m_spArrSpc->value() : 0;
-                node.pz = (node.rotAxis==2) ? m_spArrSpc->value() : 0;
-                node.e = m_spArrCnt->value();
-            } else if (node.type=="圆形阵列") {
-                node.rotAxis = m_cmbCirAx->currentIndex();
-                node.w = m_spCirCx->value(); node.h = m_spCirCy->value(); node.d = m_spCirCz->value();
-                node.rotAng = m_spCirAng->value(); node.e = m_spCirCnt->value();
-            }
-        }
-        m_btnAddUnion->setChecked(false); m_btnAddSubIn->setChecked(false); m_btnAddSubTool->setChecked(false);
-        auto* pg = m_geomStackPages->currentWidget();
-        if (pg) { QList<QPushButton*> btns = pg->findChildren<QPushButton*>(); for (auto* b : btns) if (b->isCheckable()) b->setChecked(false); }
-        fprintf(stderr, "[DEBUG buildBtn] idx=%d type=%s edgeSel=%zu inputIndices=%zu\n",
-                idx, qPrintable(node.type), node.edgeSelections.size(), node.inputIndices.size());
-        pushParamsToBindings();
-        buildGeometrySequence(idx, idx, &node.inputIndices);
-        m_projectModified = true;
+        buildGeometryFromUI(m_lastGeomIdx);
     });
 
     setupBoundaryUI();
@@ -895,6 +891,26 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
             if (toolsLayout->itemAt(i)->spacerItem()) { si = i; break; }
         toolsLayout->insertWidget(si, m_geomSelectMode);
     }
+
+    // ============================================================
+    // 视图/选择功能栏: HBox → FlowLayout
+    // 画布变窄时按钮自动换行成多行, 不再撑大 centralwidget 最小宽度
+    // (解除画布左右缩放限制; 所有控件已就位后再替换布局)
+    // ============================================================
+    {
+        QLayout* oldLay = ui->frameGraphicsTools->layout();
+        QList<QWidget*> widgets;
+        while (oldLay && oldLay->count() > 0) {
+            QLayoutItem* it = oldLay->takeAt(0);
+            if (QWidget* w = it->widget()) widgets.append(w);
+            delete it;   // 丢弃尾部 spacer: FlowLayout 无需右端撑开
+        }
+        delete oldLay;
+        auto* toolsFlow = new FlowLayout(ui->frameGraphicsTools, 6, 6);
+        toolsFlow->setContentsMargins(8, 4, 8, 4);   // 与原 .ui margin 一致
+        for (QWidget* w : widgets) toolsFlow->addWidget(w);
+    }
+
     connect(m_geomSelectMode, QOverload<int>::of(&QComboBox::currentIndexChanged), [=](int idx){
         ui->cadViewerWidget->setObjectSelectMode(idx == 1);
         ui->cadViewerWidget->setEdgeSelectMode(idx == 2);
@@ -1064,27 +1080,57 @@ void MainWindow::logMessage(const QString& msg, const QString& level) {
 }
 
 // ====================================================================
-// 几何创建工具栏 (COMSOL 风格: 体素 | 操作)
+// 几何创建工具栏 (COMSOL 风格: 构建 | 导入/导出 | 体素 | 操作 | 变换)
 // ====================================================================
 void MainWindow::setupGeometryToolbar() {
     auto* geomToolbar = new QToolBar("几何操作", this);
     geomToolbar->setMovable(false);
     geomToolbar->setObjectName("geomToolbar");
+    geomToolbar->setContentsMargins(4, 0, 4, 0);   // 去掉工具栏自身上下留白, 内容贴近上边界
     this->addToolBar(Qt::TopToolBarArea, geomToolbar);
 
-    auto addBtn = [&](const QString& text, const QString& typeForIcon) {
-        auto* btn = new QPushButton(text);
-        btn->setIcon(geomIcon(typeForIcon));
+    // ---- 面板统一样式 ----
+    const QString kPanelStyle = R"(
+        QFrame#geomPanel { background-color: #FFFFFF; border: 1px solid #DEE2E6;
+                           border-radius: 8px; padding: 2px 6px 2px 6px; }
+        QFrame#geomPanel QToolButton { background: transparent; border: none;
+                                       border-radius: 6px; padding: 0px 5px;
+                                       font-size: 13px; color: #212529; }
+        QFrame#geomPanel QToolButton:hover { background-color: #E7F1FF; }
+        QFrame#geomPanel QToolButton:pressed { background-color: #C5E1FF; }
+        QFrame#geomPanel QToolButton::menu-indicator { image: none; }
+        QLabel#geomPanelTitle { font-size: 12px; color: #6C757D; font-weight: bold;
+                                margin-top: 2px; }
+    )";
+
+    // 普通按钮: 图标在左、文字在右 (仅"更多体素"为图标在上文字在下)
+    auto makeToolBtn = [](const QString& text, const QString& iconName) {
+        auto* btn = new QToolButton();
+        btn->setText(" " + text);   // 图标与文字之间留少许间隙
+        btn->setIcon(geomIcon(iconName));
         btn->setIconSize(QSize(16, 16));
-        btn->setMaximumHeight(24); btn->setMinimumWidth(64);
-        geomToolbar->addWidget(btn);
+        btn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        btn->setAutoRaise(true);
+        btn->setMinimumWidth(72);
+        btn->setMinimumHeight(34);
+        btn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         return btn;
     };
 
-    // ---- 体素 ----
-    QLabel* lblPrim = new QLabel("体素 ");
-    lblPrim->setStyleSheet("font-weight:bold; color:#555;");
-    geomToolbar->addWidget(lblPrim);
+    // 面板容器: 白底圆角卡片, 底部居中标题
+    auto makePanel = [&](const QString& title) {
+        auto* panel = new QFrame();
+        panel->setObjectName("geomPanel");
+        panel->setStyleSheet(kPanelStyle);
+        auto* vlay = new QVBoxLayout(panel);
+        vlay->setContentsMargins(6, 2, 6, 2);
+        vlay->setSpacing(2);
+        auto* titleLbl = new QLabel(title);
+        titleLbl->setObjectName("geomPanelTitle");
+        titleLbl->setAlignment(Qt::AlignCenter);
+        vlay->addWidget(titleLbl);
+        return panel;
+    };
 
     std::map<QString,int> counters;
     // 新节点: 若无已构建节点则追加到末尾, 否则紧跟最后一个已构建节点
@@ -1114,18 +1160,75 @@ void MainWindow::setupGeometryToolbar() {
         m_projectModified = true;
     };
 
-    QStringList commonPrims = {"立方体","球体","圆柱","圆锥","圆环","楔形"};
     QStringList morePrims = {"椭球","棱柱","棱锥","圆台","棱台"};
-    for (auto& pn : commonPrims) {
-        auto* btn = addBtn(pn, pn);
-        connect(btn, &QPushButton::clicked, [=]() mutable {
-            counters[pn]++;
-            insertAfterLastBuilt(pn, QString("%1 %2").arg(pn).arg(counters[pn]));
+
+    // ============================================================
+    // 构建面板: 单个大按钮 "全部构建" (图标在上、文字在下, 同"更多体素")
+    // 功能 = 构建设置的全部几何 (等价于对最后一个节点执行"构建/更新几何体")
+    // ============================================================
+    auto* panelBuild = makePanel("构建");
+    auto* buildAllBtn = new QToolButton();
+    buildAllBtn->setText("全部构建");
+    buildAllBtn->setIcon(geomIcon("全部构建"));
+    buildAllBtn->setIconSize(QSize(28, 28));
+    buildAllBtn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+    buildAllBtn->setAutoRaise(true);
+    buildAllBtn->setMinimumWidth(84);
+    buildAllBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    connect(buildAllBtn, &QToolButton::clicked, this, [=]() {
+        // 保存最后一个节点的 UI 参数后链式构建全部节点 (空树时自动跳过)
+        buildGeometryFromUI((int)m_geomNodes.size() - 1);
+    });
+    auto* buildLay = new QVBoxLayout();
+    buildLay->addWidget(buildAllBtn, 1);   // 拉伸占满两行高度
+    qobject_cast<QVBoxLayout*>(panelBuild->layout())->insertLayout(0, buildLay);
+
+    // ============================================================
+    // 导入/导出面板: 上下两个横排按钮 (图标在左、文字在右)
+    // 功能与 File 菜单的导入/导出几何一致
+    // ============================================================
+    auto* panelIO = makePanel("导入/导出");
+    auto* importBtn = makeToolBtn("导入几何", "导入几何");
+    connect(importBtn, &QToolButton::clicked, this, &MainWindow::importGeometry);
+    auto* exportBtn = makeToolBtn("导出几何", "导出几何");
+    connect(exportBtn, &QToolButton::clicked, this, &MainWindow::exportGeometry);
+    auto* ioLay = new QVBoxLayout();
+    ioLay->setSpacing(0);
+    ioLay->addWidget(importBtn);
+    ioLay->addWidget(exportBtn);
+    qobject_cast<QVBoxLayout*>(panelIO->layout())->insertLayout(0, ioLay);
+
+    // ============================================================
+    // 体素面板: 3 列网格 (左列/中列 6 个 + 右列"更多体素"大按钮)
+    // ============================================================
+    auto* panelVoxel = makePanel("体素");
+    auto* voxelH = new QHBoxLayout();
+    voxelH->setSpacing(2);
+    qobject_cast<QVBoxLayout*>(panelVoxel->layout())->insertLayout(0, voxelH);
+
+    // 2 行 x 3 列: 上行 立方体/球体/圆柱, 下行 圆锥/圆环/楔形
+    QStringList prims = {"立方体","球体","圆柱","圆锥","圆环","楔形"};
+    auto* primGrid = new QGridLayout();
+    primGrid->setSpacing(0);
+    for (int i = 0; i < prims.size(); ++i) {
+        auto* btn = makeToolBtn(prims[i], prims[i]);
+        connect(btn, &QToolButton::clicked, [=]() mutable {
+            counters[prims[i]]++;
+            insertAfterLastBuilt(prims[i], QString("%1 %2").arg(prims[i]).arg(counters[prims[i]]));
         });
+        primGrid->addWidget(btn, i / 3, i % 3);
     }
+    voxelH->addLayout(primGrid);
 
-
-    auto* btnMore = addBtn("更多 ▾", "立方体");
+    // 右列: 放大占满两行高的"更多体素"下拉按钮 (立方体图形 + 下方文字)
+    auto* moreBtn = new QToolButton();
+    moreBtn->setText("更多体素 ▾");
+    moreBtn->setIcon(geomIcon("立方体"));
+    moreBtn->setIconSize(QSize(28, 28));
+    moreBtn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+    moreBtn->setAutoRaise(true);
+    moreBtn->setMinimumWidth(84);
+    moreBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     auto* moreMenu = new QMenu(this);
     for (auto& n : morePrims) {
         auto* act = moreMenu->addAction(geomIcon(n), n, [=]() mutable {
@@ -1133,33 +1236,67 @@ void MainWindow::setupGeometryToolbar() {
         });
         act->setIcon(geomIcon(n));
     }
-    btnMore->setMenu(moreMenu);
+    moreBtn->setMenu(moreMenu);
+    moreBtn->setPopupMode(QToolButton::InstantPopup);
+    auto* rightLay = new QVBoxLayout();
+    rightLay->addWidget(moreBtn, 1);   // 拉伸占满三行高度
+    voxelH->addLayout(rightLay, 1);
 
-    geomToolbar->addSeparator();
-
-    // ---- 布尔操作 ----
-    QLabel* lblOp = new QLabel("操作 ");
-    lblOp->setStyleSheet("font-weight:bold; color:#555;");
-    geomToolbar->addWidget(lblOp);
-    for (auto& op : {"并集","差集","交集","倒圆角","倒斜角","扫掠"}) {
-        auto* btn = addBtn(op, op);
-        connect(btn, &QPushButton::clicked, [=]() mutable {
-            counters[op]++; insertAfterLastBuilt(op, QString("%1 %2").arg(op).arg(counters[op]));
+    // ============================================================
+    // 操作面板: 2 列 x 3 行网格
+    // ============================================================
+    auto* panelOp = makePanel("操作");
+    auto* opGrid = new QGridLayout();
+    opGrid->setSpacing(0);
+    QStringList ops = {"并集","差集","交集","倒圆角","倒斜角","扫掠"};
+    for (int i = 0; i < ops.size(); ++i) {
+        auto* btn = makeToolBtn(ops[i], ops[i]);
+        connect(btn, &QToolButton::clicked, [=]() mutable {
+            counters[ops[i]]++;
+            insertAfterLastBuilt(ops[i], QString("%1 %2").arg(ops[i]).arg(counters[ops[i]]));
         });
+        opGrid->addWidget(btn, i / 3, i % 3);
     }
+    qobject_cast<QVBoxLayout*>(panelOp->layout())->insertLayout(0, opGrid);
 
-    geomToolbar->addSeparator();
-
-    // ---- 变换操作 ----
-    QLabel* lblXfm = new QLabel("变换 ");
-    lblXfm->setStyleSheet("font-weight:bold; color:#555;");
-    geomToolbar->addWidget(lblXfm);
-    for (auto& op : {"平移","旋转","镜像","缩放","偏移","线性阵列","圆形阵列"}) {
-        auto* btn = addBtn(op, op);
-        connect(btn, &QPushButton::clicked, [=]() mutable {
-            counters[op]++; insertAfterLastBuilt(op, QString("%1 %2").arg(op).arg(counters[op]));
+    // ============================================================
+    // 变换面板: 3 列 x 3 行网格 (末行"圆形阵列"居中)
+    // ============================================================
+    auto* panelXfm = makePanel("变换");
+    auto* xfmGrid = new QGridLayout();
+    xfmGrid->setSpacing(0);
+    QStringList xfms = {"平移","旋转","镜像","缩放","偏移","线性阵列","圆形阵列"};
+    for (int i = 0; i < xfms.size(); ++i) {
+        auto* btn = makeToolBtn(xfms[i], xfms[i]);
+        connect(btn, &QToolButton::clicked, [=]() mutable {
+            counters[xfms[i]]++;
+            insertAfterLastBuilt(xfms[i], QString("%1 %2").arg(xfms[i]).arg(counters[xfms[i]]));
         });
+        int row = i / 4, col = i % 4;
+        xfmGrid->addWidget(btn, row, col);
     }
+    qobject_cast<QVBoxLayout*>(panelXfm->layout())->insertLayout(0, xfmGrid);
+
+    // ============================================================
+    // 容器: 五个面板并排, 窗口变窄时水平滚动而非截断
+    // ============================================================
+    auto* scroll = new QScrollArea();
+    scroll->setWidgetResizable(false);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setStyleSheet("QScrollArea { background: transparent; border: none; }");
+    auto* content = new QWidget();
+    auto* contentH = new QHBoxLayout(content);
+    contentH->setContentsMargins(0, 0, 0, 0);
+    contentH->setSpacing(6);
+    contentH->addWidget(panelBuild);
+    contentH->addWidget(panelIO);
+    contentH->addWidget(panelVoxel);
+    contentH->addWidget(panelOp);
+    contentH->addWidget(panelXfm);
+    scroll->setWidget(content);
+    geomToolbar->addWidget(scroll);
 
     ui->cadViewerWidget->GetRenderer()->GetRenderWindow()->Render();
 }
@@ -1424,7 +1561,7 @@ void MainWindow::setupBoundaryUI() {
     voltageHLay->addWidget(bindBtn);
     layBdr->addRow("电压:", voltageWrap);
     auto* hintLabel = new QLabel("变量: x, y, z  支持: + - * / ^ sqrt sin cos abs min max");
-    hintLabel->setStyleSheet("color:#888; font-size:11px;");
+    hintLabel->setStyleSheet("color:#888; font-size:13px;");
     hintLabel->setVisible(false);
     layBdr->addRow("", hintLabel);
     connect(m_cmbBdrMode, QOverload<int>::of(&QComboBox::currentIndexChanged), [=](int idx){
@@ -1653,7 +1790,7 @@ void MainWindow::setupParamUI() {
 
     // 状态栏
     m_paramStatus = new QLabel();
-    m_paramStatus->setStyleSheet("color:#888; font-size:11px;");
+    m_paramStatus->setStyleSheet("color:#888; font-size:13px;");
     mainLayout->addWidget(m_paramStatus);
 
     // 初始化表格
@@ -2017,7 +2154,7 @@ void MainWindow::showBindDialog(QDoubleSpinBox* spin, QToolButton* btn) {
         for (auto& e : pg.entries)
             paramList << QString("%1(%2)").arg(QString::fromStdString(e.name)).arg(e.value);
     auto* hint = new QLabel("可用参数: " + paramList.join(", "));
-    hint->setStyleSheet("color:#888; font-size:11px;");
+    hint->setStyleSheet("color:#888; font-size:13px;");
     hint->setWordWrap(true);
     lay->addWidget(hint);
     // 表达式输入
@@ -3568,6 +3705,99 @@ void MainWindow::saveGeomNodeFromUI(int idx) {
     for (auto& [spin, pname] : m_paramBindings)
         if (m_spinboxNames.count(spin))
             n.nodeParamBindings[m_spinboxNames[spin]] = pname;
+}
+
+// ====================================================================
+// 构建几何: 保存指定节点的 UI 参数后链式构建 0..idx
+// (btnBuild "构建/更新几何体" 与工具栏"全部构建"共用入口)
+// ====================================================================
+void MainWindow::buildGeometryFromUI(int idx) {
+    if (idx < 0 || idx >= (int)m_geomNodes.size()) return;
+    // 变换类型: 先让 saveGeomNodeFromUI 保存通用参数, 再覆盖变换特有参数
+    std::vector<int> savedInputIndices;
+    auto& node = m_geomNodes[idx];
+    bool isXfm = (node.type=="平移"||node.type=="旋转"||node.type=="镜像"||node.type=="缩放"||node.type=="偏移"
+                   ||node.type=="倒圆角"||node.type=="倒斜角"||node.type=="扫掠"
+                   ||node.type=="线性阵列"||node.type=="圆形阵列");
+    if (isXfm) {
+        QListWidget* lw = nullptr;
+        if (node.type=="平移") lw=m_listXfmT; else if (node.type=="旋转") lw=m_listXfmR;
+        else if (node.type=="镜像") lw=m_listXfmM; else if (node.type=="缩放") lw=m_listXfmS;
+        else if (node.type=="偏移") lw=m_listXfmO;
+        else if (node.type=="倒圆角") {
+            lw=m_listFilletEdges; node.w = m_spinFilletR->value();
+            node.edgeSelections.clear(); node.inputIndices.clear();
+            for (int i=0; i<lw->count(); i++) {
+                int ni = lw->item(i)->data(Qt::UserRole).toInt();
+                int ei = lw->item(i)->data(Qt::UserRole+1).toInt();
+                node.edgeSelections.push_back({ni, ei});
+                if (std::find(node.inputIndices.begin(),node.inputIndices.end(),ni)==node.inputIndices.end())
+                    node.inputIndices.push_back(ni);
+            }
+        } else if (node.type=="倒斜角") {
+            lw=m_listChamfEdges; node.w = m_spinChamfD->value();
+            node.edgeSelections.clear(); node.inputIndices.clear();
+            for (int i=0; i<lw->count(); i++) {
+                int ni = lw->item(i)->data(Qt::UserRole).toInt();
+                int ei = lw->item(i)->data(Qt::UserRole+1).toInt();
+                node.edgeSelections.push_back({ni, ei});
+                if (std::find(node.inputIndices.begin(),node.inputIndices.end(),ni)==node.inputIndices.end())
+                    node.inputIndices.push_back(ni);
+            }
+        }
+        else if (node.type=="扫掠") {
+            // 扫掠: 截面存inputIndices+面索引, 路径边存edgeSelections
+            node.inputIndices.clear(); node.edgeSelections.clear();
+            if (m_listSwProf->count() > 0) {
+                node.inputIndices.push_back(m_listSwProf->item(0)->data(Qt::UserRole).toInt());
+                node.sweepProfileFaceIdx = m_listSwProf->item(0)->data(Qt::UserRole+1).toInt();
+            }
+            for (int i=0; i<m_listSwPath->count(); i++) {
+                int ni = m_listSwPath->item(i)->data(Qt::UserRole).toInt();
+                int ei = m_listSwPath->item(i)->data(Qt::UserRole+1).toInt();
+                node.edgeSelections.push_back({ni, ei});
+            }
+        } else if (node.type=="线性阵列") lw=m_listArrLin;
+        else if (node.type=="圆形阵列") lw=m_listArrCir;
+        if (lw) for (int i=0; i<lw->count(); i++) savedInputIndices.push_back(lw->item(i)->data(Qt::UserRole).toInt());
+    }
+    saveGeomNodeFromUI(idx);
+    // 变换参数必须在 saveGeomNodeFromUI 之后设置 (避免被覆盖)
+    if (isXfm) {
+        if (node.type != "扫掠") node.inputIndices = savedInputIndices;
+        auto* pg = m_geomStackPages->currentWidget();
+        QList<QDoubleSpinBox*> sps = pg ? pg->findChildren<QDoubleSpinBox*>() : QList<QDoubleSpinBox*>();
+        QList<QComboBox*> cmbs = pg ? pg->findChildren<QComboBox*>() : QList<QComboBox*>();
+        QList<QCheckBox*> chks = pg ? pg->findChildren<QCheckBox*>() : QList<QCheckBox*>();
+        if (node.type=="平移" && sps.size()>=3) { node.px=sps[0]->value(); node.py=sps[1]->value(); node.pz=sps[2]->value(); }
+        else if (node.type=="旋转" && sps.size()>=4) { node.rotAxis=(cmbs.size()>=1?cmbs[0]->currentIndex():0); node.rotAng=sps[0]->value(); node.w=sps[1]->value(); node.h=sps[2]->value(); node.d=sps[3]->value(); }
+        else if (node.type=="镜像" && cmbs.size()>=1 && sps.size()>=1) { node.rotAxis=cmbs[0]->currentIndex(); node.d=sps[0]->value(); }
+        else if (node.type=="缩放" && sps.size()>=4) { node.w=sps[0]->value(); node.px=sps[1]->value(); node.py=sps[2]->value(); node.pz=sps[3]->value(); }
+        else if (node.type=="偏移" && sps.size()>=1) { node.w=sps[0]->value(); }
+        if (!chks.isEmpty()) node.keepInputs = chks[0]->isChecked();
+        // 新操作参数
+        if (node.type=="倒圆角") node.w = m_spinFilletR->value();
+        else if (node.type=="倒斜角") node.w = m_spinChamfD->value();
+        else if (node.type=="线性阵列") {
+            node.rotAxis = m_cmbArrDir->currentIndex();
+            node.px = (node.rotAxis==0) ? m_spArrSpc->value() : 0;
+            node.py = (node.rotAxis==1) ? m_spArrSpc->value() : 0;
+            node.pz = (node.rotAxis==2) ? m_spArrSpc->value() : 0;
+            node.e = m_spArrCnt->value();
+        } else if (node.type=="圆形阵列") {
+            node.rotAxis = m_cmbCirAx->currentIndex();
+            node.w = m_spCirCx->value(); node.h = m_spCirCy->value(); node.d = m_spCirCz->value();
+            node.rotAng = m_spCirAng->value(); node.e = m_spCirCnt->value();
+        }
+    }
+    m_btnAddUnion->setChecked(false); m_btnAddSubIn->setChecked(false); m_btnAddSubTool->setChecked(false);
+    auto* pg = m_geomStackPages->currentWidget();
+    if (pg) { QList<QPushButton*> btns = pg->findChildren<QPushButton*>(); for (auto* b : btns) if (b->isCheckable()) b->setChecked(false); }
+    fprintf(stderr, "[DEBUG buildBtn] idx=%d type=%s edgeSel=%zu inputIndices=%zu\n",
+            idx, qPrintable(node.type), node.edgeSelections.size(), node.inputIndices.size());
+    pushParamsToBindings();
+    buildGeometrySequence(idx, idx, &node.inputIndices);
+    m_projectModified = true;
 }
 
 // ====================================================================

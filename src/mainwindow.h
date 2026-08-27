@@ -180,6 +180,8 @@ private:
                                const std::vector<int>* forceInputs = nullptr);
     void loadGeomNodeToUI(int idx);
     void saveGeomNodeFromUI(int idx);
+    // 保存指定节点 UI 参数并链式构建 (btnBuild "构建/更新几何体" 与工具栏"全部构建"共用)
+    void buildGeometryFromUI(int idx);
 
     // 几何设置面板控件 (用于 load/save)
     QDoubleSpinBox *m_geomW, *m_geomH, *m_geomD, *m_geomE, *m_geomPX, *m_geomPY, *m_geomPZ, *m_geomRotAng;
